@@ -1,3 +1,4 @@
+#!/usr/bin/python
 #created 21.06.2014 by John Vollmers
 import os, sys, argparse
 from Bio.Align.Applications import ClustalwCommandline, MuscleCommandline
@@ -42,7 +43,7 @@ def checkargs(args):
 		if not os.path.exists(temp_path) or not os.path.isdir(temp_path):
 			if verbose: 
 				print "Creating directory for temporary and intermediate result files: "+temp_path
-			os.mkdir(alignerpath)
+			os.mkdir(temp_path)
 		else:
 			if verbose:
 				print "Will store temporary and intermediate result files in "+temp_path
@@ -182,7 +183,7 @@ def call_clustalw(inputfile):
 
 def call_muscle(inputfile):
 		outputfile=inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_MUSCLE_temp_fasta_",1)
-		muscle_cline= MuscleCommandline(input=inputfile, out=outputfile, quiet=True, stable=True)
+		muscle_cline= MuscleCommandline(input=inputfile, out=outputfile, quiet=True) #add 'stable=True' to the end of this list, if the stable-bug in muscle is fixed (remove the correct_for_muscle_bug() method in that case)
 		muscle_cline()
 		return outputfile
 
@@ -274,25 +275,51 @@ def write_logfile():
 	for e in estrings:
 		logfile.write(e+"\n")
 
-def muscle_stablebug_workaround(alignment, fastaseq):
-	#this def is based on "stable.py" a workaround script to correct a bug in the "stable" function of "muscle".
+def correct_for_muscle_bug(aligned_filelist, seq_filelist):
+	#this def is a necessary workaround for the missing "stable" function of "muscle", which has been deactivated due to the discovery of a bug in this function
 	#whithout that function, the sequence order in the alignment might change, and that would be catastrophic for MLSA-analyses!
-	corrected=None
-	for x in range(len(fastaseq)):
-		for y in range(len(alignment)):
-			if fastaseq[x].id==alignment[y].id:
-				if x==0:
-					corrected=alignment[y:y+1]
-				else:
-					corrected.append(alignment[y])
+	#This workaround method could become obsolete, when future muscle versions reimplement a correct '-stable' option (hopefully in version 3.9)
+	#In that case, add the option", stable=True" to the MuscleCommandline-call in 'call_muscle()'.
+	print "\n----------------------------------"
+	print "correcting sequence order in muscle alignments"
+	for f in range(len(aligned_filelist)):
+		sys.stdout.write("\rcorrecting alignmentfile "+str(f+1)+" of "+str(len(aligned_filelist)))
+		alignmentfile=aligned_filelist[f]
+		alignmenthandle=open(alignmentfile, 'r')
+		alignment=AlignIO.read(alignmenthandle, "fasta")
+		alignmenthandle.close()
+		seqs=[]
+		seq_file=seq_filelist[f]
+		seq_handle=open(seq_file, 'r')
+		for record in SeqIO.parse(seq_handle, "fasta"):
+			seqs.append(record)
+		seq_handle.close()
+		corrected=None
+		for x in range(len(seqs)):
+			for y in range(len(alignment)):
+				#print str(x)+" "+seqs[x].id+ " == "+alignment[y].id
+				if seqs[x].id==alignment[y].id:
+					#print "True"
+					if x==0:
+						corrected=alignment[y:y+1]
+					else:
+						corrected.append(alignment[y])
+				#else:
+				#	print "False"
+		alignmenthandle=open(alignmentfile, 'w')
+		AlignIO.write([corrected], alignmenthandle, "fasta")
+		alignmenthandle.close()	
 	return corrected
 	
 #main body:
+if verbose:
+	print "\n ==PO_2_MLSA.py by John Vollmers==\n"
 checkargs(args)
 if verbose:
 	print "keep temporary files: "+str(keep_temp)
 	if not keep_temp:
 		print "will delete all temporary files"
+	print "using aligner '"+alignmeth+"'"
 	print "remove gaps: "+degap
 if docontinue:
 	headers, MLSA_list=read_PO_file(PO_file)
@@ -302,6 +329,8 @@ if docontinue:
 				seq_filelist=write_seq_files(record_dict, MLSA_list)			
 				unaligned_filelist=write_temp_files(record_dict, MLSA_list,"unaligned_temp_fasta_OG")
 				aligned_filelist=make_alignments(unaligned_filelist)
+				if alignmeth=="muscle":
+					correct_for_muscle_bug(aligned_filelist, unaligned_filelist) #Necessary because bug in muscle '-stable' option (option disabled for this reason as of muscle version 3.8)
 				alignment_list=read_alignments(aligned_filelist)
 				if docontinue:
 					if degap=="all":
