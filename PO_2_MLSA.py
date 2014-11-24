@@ -1,6 +1,6 @@
 #!/usr/bin/python
 #created 21.06.2014 by John Vollmers
-import os, sys, argparse, time
+import os, sys, argparse, time, multiprocessing
 from Bio.Align.Applications import ClustalwCommandline, MuscleCommandline, ClustalOmegaCommandline
 from Bio import AlignIO, SeqIO
 from Bio.Alphabet import IUPAC
@@ -19,20 +19,31 @@ myparser.add_argument("-t", "--threads", action="store", dest="nthreads", type=i
 myparser.add_argument("-gb", "--gblocks", action="store", dest="gblocks", choices=["n","no","f","false","y","yes", "t", "true"], default="true", help="calls gblocks (if installed) to remove gapped positions and poorly aligned regions\n(Overrides '-dg'|'--degap'\nchoices:\n\t[n|no|f|false]: will NOT use Gblocks\n\t[y|yes|t|true]: WILL use Gblocks\nDefault=true (WILL use Gblocks)")
 myparser.add_argument("-gbp", "--gblocks_path", action="store", dest="gblocks_path", default="", help="(OPTIONAL: set path to Gblocks IF not included in global PATH variable)")
 myparser.add_argument("-op", "--out_path", action="store", dest="out_path", default="", help="Path to output (will be created if it does not exist)\nDefault=current working directory")
+#V still to implement:
+myparser.add_argument("-mt", "--make_tree", action="store", dest="tree_method", choices=["raxml", "raxml_bs", "raxml_rapidbs", "none"], default="none", help="Generate ML phylogenetic trees using RAxML with the substitution model \"PROTGAMMAAUTO\"\n\tchoices:\t\"raxml\": single tree without bootstraps (using new rapid hill climbing)\n\t\traxml_bs: thorough bootstrap analyses and search for best ML tree\n\t\traxml_rapidbs: rapid bootstrap analyses and search for best ML tree in one run\n\t\tnone\nDefault=none")
+myparser.add_argument("-tbp","--tree_builder_path", action="store", dest="treebuilder_path", default="", help="Path to treebuilder (currently only raxml supported) if not listed in $PATH")
+myparser.add_argument("-sd", "--seed", action="store", dest="seed_nr", type=int, default=0, help="Integer to provide as seed for RAxML\n0=seed generated randomly\nDefault=random seed")
+
+#myparser.add_argument("-ctba", "--custom_tree_builder_args", action="store", dest="custom_tree_builder_args", default=None, help="custom arguments for raxml. CAUTION: will overide Only use if you know ExACTLY what you are doing!")
+#^ still to implement
+myparser.add_argument("-v", "--version", action="store_true", dest="showversion", default=False, help="show version information and then quit (don't run complete script)")
 args=myparser.parse_args()
 
 #TOdo: add option "return_selection" to store selection of MLSA genes as unagligned multifastas or only lists of fasta-headers
 
-version="v1.02"
+version="v1.04"
+available_cores=multiprocessing.cpu_count() #counts how many cores are available, to check if the user-argument for threads can be fulfilled
 aln_length, proc_aln_length, OG_number=0,0,0
-wstrings, estrings, lstrings=[], [], [] #warning, error and log messages respecdirtively
+wstrings, estrings, lstrings=[], [], [] #warning, error and log messages respectively
 out_path, temp_path, fasta_path, PO_file=args.out_path, args.temp_path, args.fasta_path, args.po_resultfile
-alignmeth, aligner_path=args.alignmeth, args.aligner_path
+alignmeth, aligner_path, treebuilder_path=args.alignmeth, args.aligner_path, args.treebuilder_path
+tree_method, seed=args.tree_method, args.seed_nr
 degap=args.degap
 nthreads=args.nthreads
 keep_temp=args.keep_temp
 outputfilename=os.path.join(out_path,"concatenated_orthologs_"+alignmeth+"_"+os.path.basename(PO_file)+".fasta")
 logfilename=os.path.join(out_path,"PO_2_MLSA_"+time.strftime("%Y%m%d%H%M%S")+".log")
+raxml_prog="raxmlHPC"
 verbose=True
 docontinue=True
 gblocks=True
@@ -41,9 +52,12 @@ if args.gblocks in ["n", "no", "f", "false"]:
 gblocks_path=args.gblocks_path
 
 def checkargs(args):
-	global verbose
+	global verbose, nthreads, tree_method, raxml_prog
 	if args.no_verbose:
 		verbose=False
+	if available_cores<nthreads:
+		datsAwarning("WARNING: less than "+str(nthreads)+" cores/threads available! Setting nthreads to "+str(available_cores))
+		nthreads=available_cores
 	if fasta_path!="" and (not os.path.exists(fasta_path) or not os.path.isdir(fasta_path)):
 		datsANerror("ERROR: fasta_path: '"+fasta_path+" does not exist or is no directory!")
 	if aligner_path!="":
@@ -91,8 +105,37 @@ def checkargs(args):
 				if verbose:
 					print "Located Gblocks executable: "+gblocks_path
 			else:
-				datsANerror("ERROR: Gblocks executable could not be found in the specified path: "+gblocks_path) 
-
+				datsANerror("ERROR: Gblocks executable could not be found in the specified path: "+gblocks_path)
+	if tree_method!="none":
+		if treebuilder_path=="":
+			if which("raxmlHPC")==None:
+				datsANerror("ERROR: raxmlHPC not found in any directory within $PATH! please provide a PATH to raxml binaries!")
+				tree_method="none"
+			else:
+				try:
+					checkraxml_cline=RaxmlCommandline(version=True)
+					versiontext=checkraxml_cline()[0]
+					startv=versiontext.find("version ")+len("version ")
+					endv=versiontext[startv:].find(" ")
+					version=versiontext[startv:startv+endv].split(".")
+					if int(version[0])<8 or (int(version[0])==8 and int(version[1])==0 and int(version[2])<20):
+						datsAwarning("Warning: This script was devised for and tested with RAxML v8.0.20. Your version is v"+".".join(version)+" !\n\tThis may very well still work, but if it doesn't it's YOUR fault!")
+				except:
+					datsAwarning("Warning: This script was devised for and tested with RAxML v8.0.20.\n\tNot sure which version of RAxML you're using, but it sure as hell isn't v7.3.5!\n\tThis may very well still work, but if it doesn't it's YOUR fault!")
+		elif os.path.exists(treebuilder_path) and os.path.isfile(treebuilder_path):
+			try:
+				checkraxml_cline=RaxmlCommandline(version=True)
+				versiontext=checkraxml_cline()[0]
+				startv=versiontext.find("version ")+len("version ")
+				endv=versiontext[startv:].find(" ")
+				version=versiontext[startv:startv+endv].split(".")
+				if int(version[0])<8 or (int(version[0])==8 and int(version[1])==0 and int(version[2])<20):
+						datsAwarning("Warning: This script was devised for and tested with RAxML v8.0.20. Your version is v"+".".join(version)+" !\n\tThis may very well still work, but if it doesn't it's YOUR fault!")
+				raxml_prog=treebuilder_path
+			except:
+				datsAwarning("Warning: Correct raxML-version not found under "+treebuilder_path+"!\nWill NOT calculate ML trees!")
+				tree_method="none" 
+				
 def datsAwarning(wstring):
 	global wstrings
 	wstrings.append(wstring)
@@ -129,10 +172,10 @@ def read_PO_file(filename):
 	for line in open_PO_file:
 		if firstline:
 			if line.startswith("#species"):
-				datsAwarning("WARNING! It seems you are using results from Proteinortho4. It's recommended to use Proteinortho5!\n\t(However, the derivation of MLSA genes should still work)")
+				datsAwarning("WARNING! It seems you are using results from Proteinortho4. It's recommended to use Proteinortho5 or later!\n\t(However, the derivation of MLSA genes should still work)")
 			elif line.startswith("# Species"):
 				if verbose:
-					print "\nProteinortho-results are based on Proteinortho5 or later. Good."
+					print "\nProteinortho-results seem to be based on Proteinortho5 or later. Good."
 			else:
 				datsAwarning("WARNING! Cannot clearly recognize Format of Proteinortho-results! This may produce erroneous results!\n\t For best results use Proteinortho5!") 
 			headers=line.split("\t")[org_index:]
@@ -229,18 +272,10 @@ def make_alignments(unaligned_filelist):
 		if verbose:
 			sys.stdout.write("\raligning OG "+str(counter)+" from "+str(len(unaligned_filelist))+" using "+alignmeth)
 			sys.stdout.flush()
-		#(note for future versions)The following if-choices could be exchanged by a much more efficient method using one aligner-object and the "getattr"-method (note for future versions)
-		if alignmeth=="clustalw":
-			aligned_filelist.append(call_clustalw(uf))
-		elif alignmeth=="clustalw2":#different parameters for clustalw and clustalw2 necessary tehrefore sadly two different method-definitions)
-			aligned_filelist.append(call_clustalw2(uf))
-		elif alignmeth=="clustalo":
-			aligned_filelist.append(call_clustalo(uf))
-		elif alignmeth=="muscle":
-			aligned_filelist.append(call_muscle(uf))
+		aligned_filelist.append(eval(alignmeth)(uf))
 	return aligned_filelist
 			 
-def call_clustalw(inputfile):#Todo: change number of threads
+def clustalw(inputfile):#Todo: change number of threads
 		outputfile=inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_CLUSTALW_temp_fasta_",1)
 		clustalw_cline= ClustalwCommandline(os.path.join(aligner_path, alignmeth), INFILE=inputfile, outfile=outputfile, type="PROTEIN", align=True, quiet=True, OUTORDER="INPUT")
 		try:
@@ -249,19 +284,19 @@ def call_clustalw(inputfile):#Todo: change number of threads
 		except Exception:
 			datsANerror("ERROR: clustalw version is older than v2 (probably v1.83). You should use version 2 or newer (called clustalw2 on many systems)")
 
-def call_clustalw2(inputfile):#Todo: change number of treads
+def clustalw2(inputfile):#Todo: change number of threads
 		outputfile=inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_CLUSTALW2_temp_fasta_",1)
 		clustalw_cline= ClustalwCommandline(os.path.join(aligner_path, alignmeth), INFILE=inputfile, outfile=outputfile, type="PROTEIN", align=True, quiet=True, OUTORDER="INPUT")
 		clustalw_cline()
 		return outputfile
 
-def call_clustalo(inputfile):#Todo: find out a way to check clustalo version
+def clustalo(inputfile):#Todo: find out a way to check clustalo version
 		outputfile=inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_CLUSTALO_temp_fasta_",1)
 		clustalomega_cline= ClustalOmegaCommandline(os.path.join(aligner_path, alignmeth), infile=inputfile, outfile=outputfile, seqtype="Protein", threads=nthreads, verbose=False, force=True, outputorder="input-order")
 		clustalomega_cline()
 		return outputfile
 
-def call_muscle(inputfile):#Todo: change number of threads
+def muscle(inputfile):#changing the number of threads aparently not possible
 		outputfile=inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_MUSCLE_temp_fasta_",1)
 		muscle_cline= MuscleCommandline(os.path.join(aligner_path, alignmeth), input=inputfile, out=outputfile, quiet=True) #add 'stable=True' to the end of this list, if the stable-bug in muscle is fixed (remove the correct_for_muscle_bug() method in that case)
 		muscle_cline()
@@ -281,7 +316,7 @@ def read_alignments(input_filelist):
 		datsANerror("ERROR: could not read in all temporary alignmentfiles!")
 	return alignmentlist
 
-def remove_gaps_from_alignment_borders(alignmentlist):
+def remove_gaps_from_alignment_borders(alignmentlist): #optional. Better to use Gblocks if available
 	global outputfilename
 	global proc_aln_length
 	outputfilename=outputfilename.replace("concatenated_orthologs_", "concatenated_orthologs_FlankingBordersDegapped_")
@@ -304,7 +339,7 @@ def remove_gaps_from_alignment_borders(alignmentlist):
 		write_temp_alignments(processed_alignmentlist, "Processed_removedFLANKINGgaps_SINGLEalignment_MUSCLE_temp_fasta_OG")
 	return processed_alignmentlist
 
-def remove_gaps_from_complete_alignments(alignmentlist):
+def remove_gaps_from_complete_alignments(alignmentlist): #optional. Better to use Gblocks if available
 	global outputfilename
 	global proc_aln_length
 	outputfilename=outputfilename.replace("concatenated_orthologs_", "concatenated_orthologs_AllDegapped_OG")
@@ -409,101 +444,233 @@ def correct_for_muscle_bug(aligned_filelist, seq_filelist):
 		alignmenthandle.close()	
 	return corrected
 
-def call_Gblocks(file_name): #this calls Gblocks with standard settings. I tried not to overload the possible commands 
+def call_Gblocks(file_name): #this calls Gblocks with standard settings. I tried not to overload the argument list for this python script 
 	gblocks_args=['-t=p', '-e=-gb', '-d=n']
 	gblocks_command=[os.path.join(gblocks_path,"Gblocks"), file_name]+gblocks_args
 	#print "TEST: "+" ".join(gblocks_command)
 	call(gblocks_command)
 	return file_name+"-gb"
 	
-#main body:
-if verbose:
+def randomnumber():
+	#returns a random integer to use as seed for rxml and pyml
+    random.seed()
+    return random.randint(1,2000)
+
+def raxml_rapidbs(alignmentfile, outputfilename, seed, parameters): #parameters should be a dictionary (This dictionary thing was introduced, so that the script can be more easily adapted to accept custom commandline-parameters for raxml by the user)
+	nr_threads=4
+	if "-T" in parameters:
+		nr_threads=parameters["-T"]
+	bootstraps=1000
+	if "-N" in parameters:
+		bootstraps=parameters["-N"]
+	elif "-#" in parameters:
+		bootstraps=parameters["-#"]
+	
+	datsAlogmessage("Calculating phylogenies: 'rapid bootstrap analyses and search for best-scoring ML Tree in one run' using raxmlHPC and "+ str(nr_threads)+" threads")
+	try:
+		outname="rapidBS_"+time.strftime("%Y%m%d%H%M%S")+"_"+"final_tree"	
+		raxml_cline=RaxmlCommandline(raxml_prog, sequences=alignmentfile, algorithm="a", model="PROTGAMMAAUTO", name=outname, parsimony_seed=seed, rapid_bootstrap_seed=seed, num_replicates=bootstraps, threads=nr_threads) 
+		datsAlogmessage("-->"+str(raxml_cline))
+		raxml_cline()
+		datsAlogmessage("-->SUCCESS")
+		#the resultfiles will be: "RAxML_bipartitions.rapidBS_final_tree" and "RAxML_bipartitionsBranchLabels.rapidBS_final_tree"
+		#Labels on nodes or branches, respectively
+		outputfiles=["RAxML_bipartitions."+outname, "RAxML_bipartitionsBranchLabels."+outname]
+	except Exception as e:
+		#note for future versions: create a custom exception "raxml_except" instead of using this construct over and over!
+		datsAlogmessage("-->FAILURE")
+		datsAwarning("WARNING: rapid bootstrap analyses and search for best-scoring ML tree using raxmlHPC has failed!\n\t"+str(e))	
+		return None
+	return outputfiles
+				
+def raxml_bs(alignmentfile, outputfilename, seed, parameters):
+	nr_threads=4
+	if "-T" in parameters:
+		nr_threads=parameters["-T"]
+	bootstraps=1000
+	if "-N" in parameters:
+		bootstraps=parameters["-N"]
+	elif "-#" in parameters:
+		bootstraps=parameters["-#"]
+	datsAlogmessage("Calculating phylogenies: Thorough bootstrap analyses with raxml")
+		
+	datsAlogmessage("\tDetermining best ML tree of 20 raxmlHPC runs using "+str(nr_threads)+" threads") 
+	try:
+		raxml_cline=RaxmlCommandline(raxml_prog, model="PROTGAMMAAUTO", name="best_delme_tempfile", parsimony_seed=seed, num_replicates=20, sequences=alignmentfile, threads=nr_threads) 
+		datsAlogmessage("\t-->"+str(raxml_cline))
+		raxml_cline()
+		#the resultfile will be :"RAxML_bestTree.best_delme_tempfile"
+		datsAlogmessage("\t-->SUCCESS")
+	except Exception as e:
+		datsAlogmessage("\t--FAILURE")
+		datsAwarning("WARNING: thorough bootstrap analyses using raxmlHPC failed!\n\t"+str(e))
+		return None
+	
+	datsAlogmessage("\tDoing bootstrap analyses with "+str(bootstraps)+" runs using raxmlHPC using "+str(nr_threads)+" threads")
+	try:
+		raxml_cline=RaxmlCommandline(raxml_prog, model="PROTGAMMAAUTO", sequences=alignmentfile, name="boot_delme_tempfile", parsimony_seed=seed, bootstrap_seed=seed, num_replicates=bootstraps, threads=nr_threads)
+		datsAlogmessage("\t-->"+str(raxml_cline))
+		raxml_cline()
+		#the resultfile will be: "RAxML_bootstrap.boot_delme_tempfile"
+		datsAlogmessage("\t-->SUCCESS")
+	except Exception as e:
+		datsAlogmessage("\t-->FAILURE")
+		datsAwarning("WARNING: thorough bootstrap analyses using raxmlHPC failed!\n\t"+str(e))
+		return None
+		
+	datsAlogmessage("\tDrawing bipartitions of bootstrap trees onto best ML tree using raxmlHPC using "+str(nr_threads)+" threads")
+	try:
+		outname="BS"+str(bootstraps)+"_"+time.strftime("%Y%m%d%H%M%S")+"_"+"final_tree"
+		raxml_cline=RaxmlCommandline(raxml_prog, model="PROTGAMMAAUTO", parsimony_seed=seed, algorithm="b", starting_tree="RAxML_bestTree.best_delme_tempfile", bipartition_filename="RAxML_bootstrap.boot_delme_tempfile", name=outname)
+		datsAlogmessage("\t-->"+str(raxml_cline))
+		raxml_cline()
+		#The resultfiles will be: RAxML_bipartitions.final_tree" and "RAxML_bipartitionsBranchLabels.final_tree"
+		outputfiles=["RAxML_bipartitions."+outname,"RAxML_bipartitionsBranchLabels."+outname]
+		datsAlogmessage("\t-->SUCCESS")	
+	except Exception as e:
+		datsAlogmessage("\t-->FAILURE")
+		datsAwarning("WARNING: thorough bootstrap analyses using raxmlHPC failed!\n\t"+str(e))
+		return None
+	return outputfiles
+			
+def raxml(alignmentfile, outputfilename, seed, parameters):
+	nr_threads=4
+	if "-T" in parameters:
+		nr_threads=parameters["-T"]
+	try:
+		outname="raxml_"+time.strftime("%Y%m%d%H%M%S")+"_"+"final_tree"
+		datsAlogmessage("Calculating phylogeny: Determining best ML tree of 20 raxmlHPC runs using "+str(nr_threads)+" threads")
+		raxml_cline=RaxmlCommandline(raxml_prog, sequences=alignmentfile, model="PROTGAMMAAUTO", name=outname,  parsimony_seed=seed, num_replicates=20, threads=nr_threads)
+		datsAlogmessage("\t-->"+str(raxml_cline))
+		raxml_cline()
+		#the resultfile will be :"RAxML_bestTree.final_tree"
+		outputfiles=["RAxML_bestTree."+outname]
+		datsAlogmessage("\tSUCCESS")
+		print "deleting temporary files"
+		for delfile in os.listdir("."):
+			if delfile.startswith("RAxML_") and "."+outname+".RUN." in delfile:
+				#print "deleting temp-file: "+delfile
+				os.remove(delfile)
+	except Exception as e:
+		datsAlogmessage("\t-->FAILURE")
+		datsAwarning("WARNING: searching for best ML tree using raxmlHPC failed!\n\t"+str(e))
+		return None
+	return outputfiles
+	
+def print_version():
 	print "\n ==PO_2_MLSA.py "+version+" by John Vollmers==\n"
-checkargs(args)
-if docontinue:
-	datsAlogmessage("-keep temporary files: "+str(keep_temp))
-	if not keep_temp and verbose:
-		print "-->will delete all temporary files"
-	datsAlogmessage("-using aligner '"+alignmeth+"'")
-	if gblocks in ["no","n","false","f"]:
-			datsAlogmessage("-remove gaps: "+degap)
-	else:
-		datsAlogmessage("-remove gaps: <OVERRIDDEN>\n-->will use Gblocks (with standard settings) on final result files for removal of gapped positions and poorly conserved regions")
+
+def main():
+	global seed, docontinue
+	if verbose:
+		print_version()
+	checkargs(args)
 	if docontinue:
-		headers, MLSA_list, OG_number=read_PO_file(PO_file)
+		datsAlogmessage("-keep temporary files: "+str(keep_temp))
+		if not keep_temp and verbose:
+			print "-->will delete all temporary files"
+		datsAlogmessage("-using aligner '"+alignmeth+"'")
+		if gblocks in ["no","n","false","f"]:
+				datsAlogmessage("-remove gaps: "+degap)
+		else:
+			datsAlogmessage("-remove gaps: <OVERRIDDEN>\n-->will use Gblocks (with standard settings) on final result files for removal of gapped positions and poorly conserved regions")
 		if docontinue:
-			record_dict=read_fasta_seqs(headers, MLSA_list)
+			headers, MLSA_list, OG_number=read_PO_file(PO_file)
 			if docontinue:
-					seq_filelist=write_seq_files(record_dict, MLSA_list)			
-					unaligned_filelist=write_temp_files(record_dict, MLSA_list,"unaligned_temp_fasta_OG")
-					aligned_filelist=make_alignments(unaligned_filelist)
-					if alignmeth=="muscle":
-						correct_for_muscle_bug(aligned_filelist, unaligned_filelist) #Necessary because bug in muscle '-stable' option (option disabled for this reason as of muscle version 3.8)
-					alignment_list=read_alignments(aligned_filelist)
-					if docontinue:
-						if not gblocks and degap=="all":
-							if verbose:
-								print "\n----------------------------------"
-								print "Removing all gapped positions from all single alignments prior to concatenation"
-							alignment_list=remove_gaps_from_complete_alignments(alignment_list)
-						elif not gblocks and degap=="flanking":
-							if verbose:
-								print "\n----------------------------------"
-								print "Removing only the flanking gapped positions from all single alignments prior to concatenation"
-							alignment_list=remove_gaps_from_alignment_borders(alignment_list)
-						elif not gblocks and verbose:
-							print "\nLeaving the single alignments as they are (Not removing any gapped or unconserved positions)"
+				record_dict=read_fasta_seqs(headers, MLSA_list)
+				if docontinue:
+						seq_filelist=write_seq_files(record_dict, MLSA_list)			
+						unaligned_filelist=write_temp_files(record_dict, MLSA_list,"unaligned_temp_fasta_OG")
+						aligned_filelist=make_alignments(unaligned_filelist)
+						if alignmeth=="muscle":
+							correct_for_muscle_bug(aligned_filelist, unaligned_filelist) #Necessary because bug in muscle '-stable' option (option disabled for this reason as of muscle version 3.8)
+						alignment_list=read_alignments(aligned_filelist)
 						if docontinue:
-							if verbose:
-								print "\n----------------------------------"
-								print "concatenating alignments"
-							concatenated_alignment=concatenate_alignments(alignment_list, headers)
+							if not gblocks and degap=="all":
+								if verbose:
+									print "\n----------------------------------"
+									print "Removing all gapped positions from all single alignments prior to concatenation"
+								alignment_list=remove_gaps_from_complete_alignments(alignment_list)
+							elif not gblocks and degap=="flanking":
+								if verbose:
+									print "\n----------------------------------"
+									print "Removing only the flanking gapped positions from all single alignments prior to concatenation"
+								alignment_list=remove_gaps_from_alignment_borders(alignment_list)
+							elif not gblocks and verbose:
+								print "\nLeaving the single alignments as they are (Not removing any gapped or unconserved positions)"
 							if docontinue:
 								if verbose:
 									print "\n----------------------------------"
-									print "writing concatenated alignment to fasta-file: "+outputfilename
-								write_final_alignment(outputfilename, concatenated_alignment)
-								if gblocks:
-									print "running gblocks on "+outputfilename
-									call_Gblocks(outputfilename)
-									try:
-										final_check=read_alignments([outputfilename+"-gb"])
-										proc_aln_length=len(final_check[0][0])
-									except Exception as e:
-										datsANerror("ERROR: Something wrong with the gblocks output. Please check version and executable rights of gblocks")	
-										datsANerror(str(e))
-									if docontinue:
-										datsAlogmessage("-->Processed File: "+outputfilename+"-gb\n-->Gblocks-Logfile: "+outputfilename+"-gb.htm")
+									print "concatenating alignments"
+								concatenated_alignment=concatenate_alignments(alignment_list, headers)
+								if docontinue:
+									if verbose:
+										print "\n----------------------------------"
+										print "writing concatenated alignment to fasta-file: "+outputfilename
+									write_final_alignment(outputfilename, concatenated_alignment)
+									if gblocks:
+										print "running gblocks on "+outputfilename
+										call_Gblocks(outputfilename)
+										try:
+											final_check=read_alignments([outputfilename+"-gb"])
+											proc_aln_length=len(final_check[0][0])
+										except Exception as e:
+											datsANerror("ERROR: Something wrong with the gblocks output. Please check version and executable rights of gblocks")	
+											datsANerror(str(e))
+										if docontinue:
+											datsAlogmessage("-->Processed File: "+outputfilename+"-gb\n-->Gblocks-Logfile: "+outputfilename+"-gb.htm")
 
-	if keep_temp!=True:
-		print "\n----------------------------------"
-		print "cleaning up..."
-		try:
-			for delfile in unaligned_filelist:
-				os.remove(delfile)
-				if "clustalw" in alignmeth:
-					os.remove(delfile.rstrip(".fasta")+".dnd") #remove pesky "guide-tree" files produced by clustal aligners as well	
-			for delfile in aligned_filelist:
-				os.remove(delfile)
-		except:
-			print "Nothing to delete, due to aborted run"
-	if docontinue:
-		if verbose:
-			print "=================================="
-		datsAlogmessage("FINISHED!\nthe individual (unaligned) ortholog selections were stored as the following multifastas: ")
-		datsAlogmessage(", ".join(seq_filelist))
-		datsAlogmessage(str(OG_number)+" genes concatenated to a final sequence length of "+str(aln_length)+ " residues per organism")
-	if gblocks:
-		datsAlogmessage("after 'gblocks' the remaining sequence length is "+str(proc_aln_length)+" residues")
-		datsAlogmessage("\n-->final aligned and processed sequence saved as: "+outputfilename+"-gb")
-	else:
-		datsAlogmessage("\n-->final aligned sequence saved as: "+outputfilename)
-		datsAlogmessage("\nRemember to set sequence-type as 'PROTEIN' and filetype as 'fasta_wgap' when loading the MLSA sequence into Arb!\n")
-				
-if len(wstrings)>0 or len(estrings)>0:
-	if len(wstrings)>0:
-		print "\nThere were Warnings!"
-	if len(estrings)>0:
-		print "\nThere were Errors!"
-print "See "+logfilename+" for details\n"
-write_logfile(logfilename)
+		if keep_temp!=True:
+			print "\n----------------------------------"
+			print "cleaning up..."
+			try:
+				for delfile in unaligned_filelist:
+					os.remove(delfile)
+					if "clustalw" in alignmeth:
+						os.remove(delfile.rstrip(".fasta")+".dnd") #remove pesky "guide-tree" files produced by clustal aligners as well	
+				for delfile in aligned_filelist:
+					os.remove(delfile)
+			except:
+				print "Nothing to delete, due to aborted run"
+		if docontinue:
+			if verbose:
+				print "=================================="
+			datsAlogmessage("FINISHED!\nthe individual (unaligned) ortholog selections were stored as the following multifastas: ")
+			datsAlogmessage(", ".join(seq_filelist))
+			datsAlogmessage(str(OG_number)+" genes concatenated to a final sequence length of "+str(aln_length)+ " residues per organism")
+		if gblocks:
+			datsAlogmessage("after 'gblocks' the remaining sequence length is "+str(proc_aln_length)+" residues")
+			datsAlogmessage("\n-->final aligned and processed sequence saved as: "+outputfilename+"-gb")
+		else:
+			datsAlogmessage("\n-->final aligned sequence saved as: "+outputfilename)
+			datsAlogmessage("\nRemember to set sequence-type as 'PROTEIN' and filetype as 'fasta_wgap' when loading the MLSA sequence into Arb!\n")
+		
+		if treemethod!="none":
+			datsAlogmessage("\nWAIT, I wasn't finished after all!\nNow generating maximum likelihood trees from final output alignment")
+			if seed==0:
+				seed=randomnumber()
+			treefiles=[]
+			outtreename=outputfilename+"."+tree_method+".TREE"
+			treefiles.extend(eval(tree_method)(outputfilename, outtreename, seed, {"-N":bootstraps, "-T":nthreads}))
+			if docontinue:
+				datsAlogmesage("the following trees were generated:")
+				datsAlogmessage("\t"+"\n\t".join(treefiles))
+			else:
+				datsAlogmessage("some kind of error occured during ML calculation")
+			datsAlogmessage("cleaning up again...")
+			for delfile in os.listdir("."):
+				if "delme_tempfile" in delfile:
+					os.remove(delfile)
+			
+	if len(wstrings)>0 or len(estrings)>0:
+		if len(wstrings)>0:
+			print "\nThere were Warnings!"
+		if len(estrings)>0:
+			print "\nThere were Errors!"
+	print "See "+logfilename+" for details\n"
+	write_logfile(logfilename)
+
+if args.showversion:
+	print_version()
+else:
+	main()
