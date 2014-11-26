@@ -2,6 +2,7 @@
 #created 21.06.2014 by John Vollmers
 import os, sys, argparse, time, multiprocessing
 from Bio.Align.Applications import ClustalwCommandline, MuscleCommandline, ClustalOmegaCommandline
+from Bio.Phylo.Applications import RaxmlCommandline
 from Bio import AlignIO, SeqIO
 from Bio.Alphabet import IUPAC
 from subprocess import call
@@ -121,7 +122,7 @@ def checkargs(args):
 					if int(version[0])<8 or (int(version[0])==8 and int(version[1])==0 and int(version[2])<20):
 						datsAwarning("Warning: This script was devised for and tested with RAxML v8.0.20. Your version is v"+".".join(version)+" !\n\tThis may very well still work, but if it doesn't it's YOUR fault!")
 				except:
-					datsAwarning("Warning: This script was devised for and tested with RAxML v8.0.20.\n\tNot sure which version of RAxML you're using, but it sure as hell isn't v7.3.5!\n\tThis may very well still work, but if it doesn't it's YOUR fault!")
+					datsAwarning("Warning: This script was devised for and tested with RAxML v8.0.20.\n\tNot sure which version of RAxML you're using, but it sure as hell isn't v7 or v8!\n\tThis may very well still work, but if it doesn't it's YOUR fault!")
 		elif os.path.exists(treebuilder_path) and os.path.isfile(treebuilder_path):
 			try:
 				checkraxml_cline=RaxmlCommandline(version=True)
