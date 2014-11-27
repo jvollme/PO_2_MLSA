@@ -24,7 +24,7 @@ myparser.add_argument("-op", "--out_path", action="store", dest="out_path", defa
 myparser.add_argument("-mt", "--make_tree", action="store", dest="tree_method", choices=["raxml", "raxml_bs", "raxml_rapidbs", "none"], default="none", help="Generate ML phylogenetic trees using RAxML with the substitution model \"PROTGAMMAAUTO\"\n\tchoices:\t\"raxml\": single tree without bootstraps (using new rapid hill climbing)\n\t\traxml_bs: thorough bootstrap analyses and search for best ML tree\n\t\traxml_rapidbs: rapid bootstrap analyses and search for best ML tree in one run\n\t\tnone\nDefault=none")
 myparser.add_argument("-tbp","--tree_builder_path", action="store", dest="treebuilder_path", default="", help="Path to treebuilder (currently only raxml supported) if not listed in $PATH")
 myparser.add_argument("-sd", "--seed", action="store", dest="seed_nr", type=int, default=0, help="Integer to provide as seed for RAxML\n0=seed generated randomly\nDefault=random seed")
-
+myparser.add_argument("-bs", "--bootstraps", action="store", dest="nr_bootstraps", type=int, default=1000, help="Number of bootstraps(if any)\ndefault=1000")
 #myparser.add_argument("-ctba", "--custom_tree_builder_args", action="store", dest="custom_tree_builder_args", default=None, help="custom arguments for raxml. CAUTION: will overide Only use if you know ExACTLY what you are doing!")
 #^ still to implement
 myparser.add_argument("-v", "--version", action="store_true", dest="showversion", default=False, help="show version information and then quit (don't run complete script)")
@@ -41,6 +41,7 @@ alignmeth, aligner_path, treebuilder_path=args.alignmeth, args.aligner_path, arg
 tree_method, seed=args.tree_method, args.seed_nr
 degap=args.degap
 nthreads=args.nthreads
+tree_method, bootstraps, seed = args.tree_method, args.nr_bootstraps, args.seed_nr
 keep_temp=args.keep_temp
 outputfilename=os.path.join(out_path,"concatenated_orthologs_"+alignmeth+"_"+os.path.basename(PO_file)+".fasta")
 logfilename=os.path.join(out_path,"PO_2_MLSA_"+time.strftime("%Y%m%d%H%M%S")+".log")
@@ -445,11 +446,42 @@ def correct_for_muscle_bug(aligned_filelist, seq_filelist):
 		alignmenthandle.close()	
 	return corrected
 
+def rename_for_gblocks(align_file):
+	#temporarily rename sequences, so that gblocks doesn't freak out
+	print "renaming sequences before gblocks"
+	alignment = read_alignments([align_file])[0]
+	index = 1
+	temp_name_dict = {}
+	tempfile_name = align_file + "_" + "deltemp_indexed_alignments_" + time.strftime("%Y%m%d%H%M%S")
+	for al in alignment:
+		print "renaming " + al.id + " to " + str(index)
+		temp_name_dict[str(index)] = al.id
+		al.id = str(index)
+		al.description = ""
+		index += 1
+	write_final_alignment(tempfile_name, alignment)
+	print "rename_dict:"
+	print temp_name_dict
+	return tempfile_name, temp_name_dict
+	
+def rename_after_gblocks(align_file, temp_name_dict, final_filename):
+	print "renaming sequences back after gblocks"
+	alignment = read_alignments([align_file])[0]
+	for al in alignment:
+		print "renaming " + al.id + " to " + temp_name_dict[al.id]
+		al.id = temp_name_dict[al.id]
+		al.description = "gblocks-filtered concatenated coregenome"
+	write_final_alignment(final_filename, alignment)
+
 def call_Gblocks(file_name): #this calls Gblocks with standard settings. I tried not to overload the argument list for this python script 
+	tempfile_name, temp_name_dict = rename_for_gblocks(file_name)
 	gblocks_args=['-t=p', '-e=-gb', '-d=n']
-	gblocks_command=[os.path.join(gblocks_path,"Gblocks"), file_name]+gblocks_args
+	gblocks_command=[os.path.join(gblocks_path,"Gblocks"), tempfile_name]+gblocks_args
 	#print "TEST: "+" ".join(gblocks_command)
 	call(gblocks_command)
+	rename_after_gblocks(tempfile_name+"-gb", temp_name_dict, file_name + "-gb")
+	os.remove(tempfile_name)
+	os.remove(tempfile_name+"-gb")
 	return file_name+"-gb"
 	
 def randomnumber():
@@ -646,7 +678,7 @@ def main():
 			datsAlogmessage("\n-->final aligned sequence saved as: "+outputfilename)
 			datsAlogmessage("\nRemember to set sequence-type as 'PROTEIN' and filetype as 'fasta_wgap' when loading the MLSA sequence into Arb!\n")
 		
-		if treemethod!="none":
+		if tree_method!="none":
 			datsAlogmessage("\nWAIT, I wasn't finished after all!\nNow generating maximum likelihood trees from final output alignment")
 			if seed==0:
 				seed=randomnumber()
