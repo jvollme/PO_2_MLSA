@@ -1,6 +1,6 @@
 #!/usr/bin/python
 #created 21.06.2014 by John Vollmers
-import os, sys, argparse, time, multiprocessing
+import os, sys, argparse, time, multiprocessing, random
 from Bio.Align.Applications import ClustalwCommandline, MuscleCommandline, ClustalOmegaCommandline
 from Bio.Phylo.Applications import RaxmlCommandline
 from Bio import AlignIO, SeqIO
@@ -16,6 +16,7 @@ myparser.add_argument("-am", "--alignmethod", action="store", dest="alignmeth", 
 myparser.add_argument("-ap", "--aligner_path", action="store", dest="aligner_path", default="", help="(OPTIONAL: set path to the aligner of choice IF not included in global PATH variable")
 myparser.add_argument("-dg", "--degap", action="store", dest="degap",choices=["none", "all", "flanking"], default="all", help="(Only meant for use, if Gblocks is not installed\nSpecify if and which gaps to remove:\n\t'none' keep all gapped positions in the final MLSA-alignment\n\t'all' remove ALL gapped postitions in the alignments\n\t'flanking' remove flanking gapped positions from all individual alignments\nDefault='all'")
 myparser.add_argument("-s", "--silent", action="store_true", dest="no_verbose", help="non-verbose mode")
+#todo: implement an own "mutlrithreading" for alignment-step (start nthreads alignment-processes simultaniously. wait for all processes to finish before carrying on)
 myparser.add_argument("-t", "--threads", action="store", dest="nthreads", type=int, default=1, help="Maximum number of threads to use for alignment steps\nDefault=1")
 myparser.add_argument("-gb", "--gblocks", action="store", dest="gblocks", choices=["n","no","f","false","y","yes", "t", "true"], default="true", help="calls gblocks (if installed) to remove gapped positions and poorly aligned regions\n(Overrides '-dg'|'--degap'\nchoices:\n\t[n|no|f|false]: will NOT use Gblocks\n\t[y|yes|t|true]: WILL use Gblocks\nDefault=true (WILL use Gblocks)")
 myparser.add_argument("-gbp", "--gblocks_path", action="store", dest="gblocks_path", default="", help="(OPTIONAL: set path to Gblocks IF not included in global PATH variable)")
@@ -54,6 +55,7 @@ if args.gblocks in ["n", "no", "f", "false"]:
 gblocks_path=args.gblocks_path
 
 def checkargs(args):
+	#print "CHECKING ARGS"
 	global verbose, nthreads, tree_method, raxml_prog
 	if args.no_verbose:
 		verbose=False
@@ -109,11 +111,26 @@ def checkargs(args):
 			else:
 				datsANerror("ERROR: Gblocks executable could not be found in the specified path: "+gblocks_path)
 	if tree_method!="none":
+		#print "CHECKING raxml-binaries"
 		if treebuilder_path=="":
-			if which("raxmlHPC")==None:
-				datsANerror("ERROR: raxmlHPC not found in any directory within $PATH! please provide a PATH to raxml binaries!")
+			if which("raxmlHPC")==None and which("raxmlHPC-PTHREADS")==None and which("raxmlHPC-PTHREADS-SSE3")==None and which("raxmlHPC-SSE3")==None:
+				datsANerror("ERROR: No raxmlHPC binaries found in any directory within $PATH! please provide a PATH to raxml binaries!")
 				tree_method="none"
 			else:
+				if which("raxmlHPC-PTHREADS-SSE3")!=None:
+					raxml_prog=which("raxmlHPC-PTHREADS-SSE3")
+					datsAlogmessage("found "+raxml_prog+ "! will use this tool") 
+				elif which("raxmlHPC-PTHREADS")!=None:
+					raxml_prog=which("raxmlHPC-PTHREADS")
+					datsAlogmessage("found "+raxml_prog+ "! will use this tool")
+				else:
+					datsAwarning("Warning: multithreading is only supported with 'PTHREADS'-versions of raxml. Not sure if your raxml binaries support this.\t\nif raxml calculations fail, recombile raxml with 'PTHREADS'-option")
+					if which("raxmlHPC-SSE3")!=None:
+						raxml_prog=which("raxmlHPC-SSE3")
+						datsAlogmessage("found "+raxml_prog+ "! will use this tool")
+					else:
+						raxml_prog=which("raxmlHPC")
+						datsAlogmessage("found "+raxml_prog+ "! will use this tool")
 				try:
 					checkraxml_cline=RaxmlCommandline(version=True)
 					versiontext=checkraxml_cline()[0]
@@ -125,6 +142,8 @@ def checkargs(args):
 				except:
 					datsAwarning("Warning: This script was devised for and tested with RAxML v8.0.20.\n\tNot sure which version of RAxML you're using, but it sure as hell isn't v7 or v8!\n\tThis may very well still work, but if it doesn't it's YOUR fault!")
 		elif os.path.exists(treebuilder_path) and os.path.isfile(treebuilder_path):
+			if nthreads>1 and not "PTHREADS" in treebuilder_path:
+				datsAwarning("Warning: multithreading is only supported with 'PTHREADS'-versions of raxml. Not sure if your choosen binaries support this.\t\nif raxml calculations fail, recombile raxml with 'PTHREADS'-option") 
 			try:
 				checkraxml_cline=RaxmlCommandline(version=True)
 				versiontext=checkraxml_cline()[0]
@@ -460,15 +479,15 @@ def rename_for_gblocks(align_file):
 		al.description = ""
 		index += 1
 	write_final_alignment(tempfile_name, alignment)
-	print "rename_dict:"
-	print temp_name_dict
+	#print "rename_dict:"
+	#print temp_name_dict
 	return tempfile_name, temp_name_dict
 	
 def rename_after_gblocks(align_file, temp_name_dict, final_filename):
 	print "renaming sequences back after gblocks"
 	alignment = read_alignments([align_file])[0]
 	for al in alignment:
-		print "renaming " + al.id + " to " + temp_name_dict[al.id]
+		#print "renaming " + al.id + " to " + temp_name_dict[al.id]
 		al.id = temp_name_dict[al.id]
 		al.description = "gblocks-filtered concatenated coregenome"
 	write_final_alignment(final_filename, alignment)
