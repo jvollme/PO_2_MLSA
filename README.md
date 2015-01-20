@@ -1,25 +1,43 @@
-usage: PO_2_MLSA.py [-h] -po PO_RESULTFILE [-f FASTA_PATH] [-tp TEMP_PATH]
-                    [-kt] [-am {muscle,clustalw,clustalw2,clustalo}]
-                    [-ap ALIGNER_PATH] [-dg {none,all,flanking}] [-s]
-                    [-t NTHREADS] [-gb {n,no,f,false,y,yes,t,true}]
-                    [-gbp GBLOCKS_PATH] [-op OUT_PATH]
-                    [-mt {raxml,raxml_bs,raxml_rapidbs,none}]
-                    [-tbp TREEBUILDER_PATH] [-sd SEED_NR] [-bs NR_BOOTSTRAPS]
-                    [-v]
+##PO_2_MLSA.py v1.2
+Automizes the creation of concatenated alignments of __single copy__ genes with ___orthologues___ in comparison organisms for the construction of MLSA-based phylogenetic trees. Can optionally automize pylogenetic tree calculation using [RaXML][]
 
-==PO_2_MLSA.py v1.2 by John Vollmers==
-Creates concatenated alignments of UNIQUE Genes with orthologues in comparison organisms for the construction of MLSA-based phylogenetic trees.
-Optionally the resulting concatenated alignments may contain all gapped alignmentpositions or may be stripped either of ALL gapped positions or of all gapped positions in the flanking regions of each composite ortholog
+Poorly aligned positions may be automatically filtered from the alignments using [Gblocks][] 
+
+Optionally the resulting concatenated alignments can be specified to contain all gapped alignment positions or to be stripped either of _all_ gapped positions or of only such gapped positions in the flanking regions of each composite ortholog
+
 This script is supposed to be part of a pipeline consisting of:
-	A.)Conversion of Genbank/Embl-Files to ANNOTATED(!) Fastas using CDS_extractor.pl by Andreas Leimbach
-	B.)Calculation of orthologs and paralogs using proteinortho5 (WITH the '-single' and '-self' arguments!)
-	C.)The creation of concatenated MLSA-sequences based on:
-		-the fasta sequences of step A
-		-the proteinortho5-results from step B
 
-The output-file will be in fasta format (but including gapped positions, so remember to use 'fasta_wgap' when loading into Arb!). However it's absolutely no problem to include other common output-alignmentformats on request!
+1. Conversion of Genbank/Embl-Files to __annotated__(!) fastas using [CDS_extractor.pl][] by Andreas Leimbach
 
-optional arguments:
+2. Calculation of orthologs and paralogs using [proteinortho5][] (with the _'-single'_ and _'-self'_ arguments!)
+
+3. The creation of concatenated MLSA-sequences based on:
+    - the fasta sequences of step 1.
+    - the [proteinortho5][]-results from step 2.
+
+The output-file will be in _fasta_ format (but including gapped positions, so remember to use _'fasta_wgap'_ if and when loading into [Arb][].
+
+####Dependancies:
+ - [proteinortho5][]
+ - [CDS_extractor.pl][]
+ - [muscle][] | [clustalw][] | [clustalo][]
+ - [Gblocks][]
+ - [RaXML][]
+
+####Usage:  
+````
+PO_2_MLSA.py [-h] -po PO_RESULTFILE [-f FASTA_PATH] [-tp TEMP_PATH]
+             [-kt] [-am {muscle,clustalw,clustalw2,clustalo}]
+             [-ap ALIGNER_PATH] [-dg {none,all,flanking}] [-s]
+             [-t NTHREADS] [-gb {n,no,f,false,y,yes,t,true}]
+             [-gbp GBLOCKS_PATH] [-op OUT_PATH]
+             [-mt {raxml,raxml_bs,raxml_rapidbs,none}]
+             [-tbp TREEBUILDER_PATH] [-sd SEED_NR] [-bs NR_BOOTSTRAPS]
+             [-v]
+````
+
+####Optional arguments:
+````
   -h, --help            show this help message and exit
   -po PO_RESULTFILE, --proteinortho PO_RESULTFILE
                         (String) file with proteinortho5 results
@@ -77,3 +95,13 @@ optional arguments:
                         Number of bootstraps(if any)
                         default=1000
   -v, --version         show version information and then quit (don't run complete script)
+````
+[proteinortho5]: https://www.bioinf.uni-leipzig.de/Software/proteinortho/
+[CDS_extractor.pl]: https://github.com/aleimba/bac-genomics-scripts.git
+[muscle]: http://www.drive5.com/muscle/
+[clustalw]: http://www.clustal.org/clustal2/
+[clustalw2]: http://www.clustal.org/clustal2/
+[clustalo]: http://www.clustal.org/omega/
+[gblocks]: http://molevol.cmima.csic.es/castresana/Gblocks.html
+[raxml]: http://sco.h-its.org/exelixis/web/software/raxml/index.html
+[arb]: http://www.arb-home.de/
