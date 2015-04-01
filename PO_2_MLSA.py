@@ -132,7 +132,7 @@ def checkargs(args):
 						raxml_prog=which("raxmlHPC")
 						datsAlogmessage("found "+raxml_prog+ "! will use this tool")
 				try:
-					checkraxml_cline=RaxmlCommandline(version=True)
+					checkraxml_cline=RaxmlCommandline(raxml_prog, version=True)
 					versiontext=checkraxml_cline()[0]
 					startv=versiontext.find("version ")+len("version ")
 					endv=versiontext[startv:].find(" ")
@@ -231,10 +231,11 @@ def read_fasta_seqs(headers, MLSA_list):
 	for org in record_dict:
 		record_dict[org]={}
 	for h in range(len(headers)):
+		print headers[h]
 		if MLSA_list[h][0]!=headers[h]:
 			datsANerror("ERROR: MLSA_list and headers are not synchronized! WTF!?!?!?!?")
 			break
-		if not os.path.exists(os.path.join(fasta_path, headers[h])) or not os.path.isfile(os.path.join(fasta_path, headers[h])):
+		if not os.path.exists(os.path.join(fasta_path, headers[h])) or not (os.path.isfile(os.path.join(fasta_path, headers[h])) or os.path.islink(os.path.join(fasta_path, headers[h]))):
 			datsANerror("ERROR: Can't find fasta file: "+(os.path.join(fasta_path, headers[h]))+"!\n\tPlease provide a path to a directory, that contains all fasta-files listed in "+PO_file)
 			return
 		open_fastafile=open(os.path.join(fasta_path, headers[h]), 'r')
@@ -520,7 +521,7 @@ def raxml_rapidbs(alignmentfile, outputfilename, seed, parameters): #parameters 
 	
 	datsAlogmessage("Calculating phylogenies: 'rapid bootstrap analyses and search for best-scoring ML Tree in one run' using raxmlHPC and "+ str(nr_threads)+" threads")
 	try:
-		outname="rapidBS_"+time.strftime("%Y%m%d%H%M%S")+"_"+"final_tree"	
+		outname="MLSA_rapidBS"+str(bootstraps)+"_"+time.strftime("%Y%m%d%H%M%S")+"_"+"final_tree"	
 		raxml_cline=RaxmlCommandline(raxml_prog, sequences=alignmentfile, algorithm="a", model="PROTGAMMAAUTO", name=outname, parsimony_seed=seed, rapid_bootstrap_seed=seed, num_replicates=bootstraps, threads=nr_threads) 
 		datsAlogmessage("-->"+str(raxml_cline))
 		raxml_cline()
@@ -572,7 +573,7 @@ def raxml_bs(alignmentfile, outputfilename, seed, parameters):
 		
 	datsAlogmessage("\tDrawing bipartitions of bootstrap trees onto best ML tree using raxmlHPC using "+str(nr_threads)+" threads")
 	try:
-		outname="BS"+str(bootstraps)+"_"+time.strftime("%Y%m%d%H%M%S")+"_"+"final_tree"
+		outname="MLSA_raxmlBS"+str(bootstraps)+"_"+time.strftime("%Y%m%d%H%M%S")+"_"+"final_tree"
 		raxml_cline=RaxmlCommandline(raxml_prog, model="PROTGAMMAAUTO", parsimony_seed=seed, algorithm="b", starting_tree="RAxML_bestTree.best_delme_tempfile", bipartition_filename="RAxML_bootstrap.boot_delme_tempfile", name=outname)
 		datsAlogmessage("\t-->"+str(raxml_cline))
 		raxml_cline()
@@ -590,7 +591,7 @@ def raxml(alignmentfile, outputfilename, seed, parameters):
 	if "-T" in parameters:
 		nr_threads=parameters["-T"]
 	try:
-		outname="raxml_"+time.strftime("%Y%m%d%H%M%S")+"_"+"final_tree"
+		outname="MLSA_raxml_"+time.strftime("%Y%m%d%H%M%S")+"_"+"final_tree"
 		datsAlogmessage("Calculating phylogeny: Determining best ML tree of 20 raxmlHPC runs using "+str(nr_threads)+" threads")
 		raxml_cline=RaxmlCommandline(raxml_prog, sequences=alignmentfile, model="PROTGAMMAAUTO", name=outname,  parsimony_seed=seed, num_replicates=20, threads=nr_threads)
 		datsAlogmessage("\t-->"+str(raxml_cline))
@@ -705,7 +706,7 @@ def main():
 			outtreename=outputfilename+"."+tree_method+".TREE"
 			treefiles.extend(eval(tree_method)(outputfilename, outtreename, seed, {"-N":bootstraps, "-T":nthreads}))
 			if docontinue:
-				datsAlogmesage("the following trees were generated:")
+				datsAlogmessage("the following trees were generated:")
 				datsAlogmessage("\t"+"\n\t".join(treefiles))
 			else:
 				datsAlogmessage("some kind of error occured during ML calculation")
