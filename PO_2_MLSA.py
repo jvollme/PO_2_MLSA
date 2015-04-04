@@ -21,13 +21,11 @@ myparser.add_argument("-t", "--threads", action = "store", dest = "nthreads", ty
 myparser.add_argument("-gb", "--gblocks", action = "store", dest = "gblocks", choices = ["n", "no", "f", "false", "y", "yes", "t", "true"], default = "true", help = "calls gblocks (if installed) to remove gapped positions and poorly aligned regions\n(Overrides '-dg'|'--degap'\nchoices:\n\t[n|no|f|false]: will NOT use Gblocks\n\t[y|yes|t|true]: WILL use Gblocks\nDefault = true (WILL use Gblocks)")
 myparser.add_argument("-gbp", "--gblocks_path", action = "store", dest = "gblocks_path", default = "", help = "(OPTIONAL: set path to Gblocks IF not included in global PATH variable)")
 myparser.add_argument("-op", "--out_path", action = "store", dest = "out_path", default = "", help = "Path to output (will be created if it does not exist)\nDefault = current working directory")
-#V still to implement:
 myparser.add_argument("-mt", "--make_tree", action = "store", dest = "tree_method", choices = ["raxml", "raxml_bs", "raxml_rapidbs", "none"], default = "none", help = "Generate ML phylogenetic trees using RAxML with the substitution model \"PROTGAMMAAUTO\"\n\tchoices:\t\"raxml\": single tree without bootstraps (using new rapid hill climbing)\n\t\traxml_bs: thorough bootstrap analyses and search for best ML tree\n\t\traxml_rapidbs: rapid bootstrap analyses and search for best ML tree in one run\n\t\tnone\nDefault = none")
 myparser.add_argument("-tbp", "--tree_builder_path", action = "store", dest = "treebuilder_path", default = "", help = "Path to treebuilder (currently only raxml supported) if not listed in $PATH")
 myparser.add_argument("-sd", "--seed", action = "store", dest = "seed_nr", type = int, default = 0, help = "Integer to provide as seed for RAxML\n0 = seed generated randomly\nDefault = random seed")
 myparser.add_argument("-bs", "--bootstraps", action = "store", dest = "nr_bootstraps", type = int, default = 1000, help = "Number of bootstraps(if any)\ndefault = 1000")
 #myparser.add_argument("-ctba", "--custom_tree_builder_args", action = "store", dest = "custom_tree_builder_args", default = None, help = "custom arguments for raxml. CAUTION: will overide Only use if you know ExACTLY what you are doing!")
-#^ still to implement
 myparser.add_argument("-v", "--version", action = "store_true", dest = "showversion", default = False, help = "show version information and then quit (don't run complete script)")
 myparser.add_argument("--debug", action = "store_true", dest = "debug", default = False, help = "Log extra info for debugging")
 args = myparser.parse_args()
@@ -246,7 +244,7 @@ def read_PO_file(filename):
 		if len(org[1]) != len(MLSA_list[0][1]):
 			raise OSError("something went wrong while reading proteinortho-results. Not the same number of comparison genes for all Organisms!")
 			
-	mylogger.info("\nrecognized %d unambigious ( = unique) 'Orthologeous Groups' (OGs) shared by the comparison organisms" % len(MLSA_list[0][1]))
+	mylogger.info("\nrecognized %d unambigious ( = unique) 'Orthologeous Groups' (OGs) shared by all %d comparison organisms" %(len(MLSA_list[0][1]), len(headers)))
 	OG_number = len(MLSA_list[0][1])
 	
 	return headers, MLSA_list, OG_number
@@ -259,7 +257,7 @@ def read_fasta_seqs(headers, MLSA_list):
 		record_dict[org] = {}
 		
 	for h in range(len(headers)):
-		print headers[h]
+		mylogger.debug("reading file: %s" % headers[h])
 		if MLSA_list[h][0] != headers[h]:
 			datsANerror("ERROR: MLSA_list and headers are not synchronized! WTF!?!?!?!?")
 			break
@@ -321,47 +319,100 @@ def write_temp_alignments(alignmentlist, prefix):
 		
 	return proc_aligned_filelist
 
-def make_alignments(unaligned_filelist):
-	mylogger.debug("make_alignments(unaligned_filelist)")
-	mylogger.info("\n%s\nAligning Orthologeous Groups (OGs)" % hline)
-	aligned_filelist = []
-	counter = 0
+#def make_alignments(unaligned_filelist):
+#	mylogger.debug("make_alignments(unaligned_filelist)")
+#	mylogger.info("\n%s\nAligning Orthologeous Groups (OGs)" % hline)
+#	aligned_filelist = []
+#	counter = 0
+#	
+#	for uf in unaligned_filelist:
+#		counter += 1
+#		if verbose:
+#			sys.stdout.write("\raligning OG %d from %d using %s" %(counter, len(unaligned_filelist), args.alignmeth))
+#			sys.stdout.flush()
+#		aligned_filelist.extend(eval(args.alignmeth)(uf))
+#		
+#	return aligned_filelist
 	
-	for uf in unaligned_filelist:
-		counter += 1
-		if verbose:
-			sys.stdout.write("\raligning OG %d from %d using %s" %(counter, len(unaligned_filelist), args.alignmeth))
-			sys.stdout.flush()
-		aligned_filelist.append(eval(args.alignmeth)(uf))
+def run_multiprocess_alignment(targetfunction, unaligned_files_portion): #must start working with classes to avoid such long argument lists
+	mylogger.debug("run_multiprocess_alignment(%s, %s)" %(targetfunction, unaligned_files_portion))
+	if __name__ == '__main__': #just making sure function is only called within its intended context
+		group_results = []
+		if len(unaligned_files_portion) > args.nthreads: #just an additional safety catch
+			raise RuntimeError("More alignment jobs sent to queue than specified cpus! there must be something wrong with this script!")
+			
+		mp_output = multiprocessing.Queue()
+		processes = [multiprocessing.Process(target=eval(targetfunction), args=(x, mp_output)) for x in unaligned_files_portion]
 		
+		for p in processes:
+			p.start()
+			
+		for p in processes:
+			p.join()
+			
+		group_results = [mp_output.get() for p in processes]
+		return group_results
+		
+	else:
+		raise RuntimeError("FORBIDDEN TO CALL THIS (MULTIPROCESSING) FUNCTION FROM AN EXTERNAL MODULE\n-->ABORTING")
+
+def make_alignments(unaligned_filelist): #must start working with classes to avoid such long argument lists
+	mylogger.debug("run_multiprocess_alignment(%s, unaligned_filelist)" % args.alignmeth)
+	mylogger.info("\n%s\nAligning Orthologeous Groups (OGs) using %s and %d cpus" %(hline, args.alignmeth, args.nthreads))
+	full_thread_mp_groups = len(unaligned_filelist) // args.nthreads
+	remaining_mp_group_threads = len(unaligned_filelist) % args.nthreads
+	aligned_filelist = []
+	startindex = 0
+	
+	for mp_group in range(full_thread_mp_groups):
+		endindex = startindex + args.nthreads
+		mylogger.debug("aligned_filelist.extend(run_multiprocess_alignment(%s, unaligned_filelist[%d:%d]))" %(args.alignmeth, startindex, endindex))
+		aligned_filelist.extend(run_multiprocess_alignment(args.alignmeth, unaligned_filelist[startindex:endindex]))
+		sys.stdout.write("\raligned %d of %d OGs using %s" %(endindex, len(unaligned_filelist), args.alignmeth))
+		sys.stdout.flush()
+		startindex = endindex
+	
+	#finish off any remaining alignment jobs (in case the total number of alignment-jobs was not evenly divisible by the number of cpus)
+	if remaining_mp_group_threads > 0:
+		endindex = len(unaligned_filelist)
+		aligned_filelist.extend(run_multiprocess_alignment(args.alignmeth, unaligned_filelist[startindex:endindex]))
+		sys.stdout.write("\raligned %d of %d OGs using %s" %(endindex, len(unaligned_filelist), args.alignmeth))
+		sys.stdout.flush()
+	
+#	print "\n".join(aligned_filelist)
+#	print hline
+	aligned_filelist.sort() #filist gets all jumbled up by multiprocessing --> sort back into original order according to OG number!
+#	print "\n".join(aligned_filelist)
 	return aligned_filelist
 
-def clustalw(inputfile):#Todo: change number of threads
+
+def clustalw(inputfile, mp_output):#Todo: change number of threads
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_CLUSTALW_temp_fasta_", 1)
 		clustalw_cline = ClustalwCommandline(os.path.join(args.aligner_path, args.alignmeth), INFILE = inputfile, outfile = outputfile, type = "PROTEIN", align = True, quiet = True, OUTORDER = "INPUT")
 		try:
 			clustalw_cline()
-			return outputfile
+			mp_output.put(outputfile)
 		except Exception:
-			datsANerror("ERROR: clustalw version is older than v2 (probably v1.83). You should use version 2 or newer (called clustalw2 on many systems)")
+			raise RuntimeError("Your clustalw version is older than v2 (probably v1.83). You should use version 2 or newer (called clustalw2 on many systems)")
 
-def clustalw2(inputfile):#Todo: change number of threads
+def clustalw2(inputfile, mp_output):#Todo: change number of threads
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_CLUSTALW2_temp_fasta_", 1)
 		clustalw_cline = ClustalwCommandline(os.path.join(args.aligner_path, args.alignmeth), INFILE = inputfile, outfile = outputfile, type = "PROTEIN", align = True, quiet = True, OUTORDER = "INPUT")
 		clustalw_cline()
-		return outputfile
+		mp_output.put(outputfile)
 
-def clustalo(inputfile):#Todo: find out a way to check clustalo version
+def clustalo(inputfile, mp_output):#Todo: find out a way to check clustalo version
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_CLUSTALO_temp_fasta_", 1)
 		clustalomega_cline = ClustalOmegaCommandline(os.path.join(args.aligner_path, args.alignmeth), infile = inputfile, outfile = outputfile, seqtype = "Protein", threads = args.nthreads, verbose = False, force = True, outputorder = "input-order")
 		clustalomega_cline()
-		return outputfile
+		mp_output.put(outputfile)
 
-def muscle(inputfile):#changing the number of threads aparently not possible
+def muscle(inputfile, mp_output):#changing the number of threads aparently not possible
+		mylogger.debug("muscle(%s)" % inputfile)
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_MUSCLE_temp_fasta_", 1)
 		muscle_cline = MuscleCommandline(os.path.join(args.aligner_path, args.alignmeth), input = inputfile, out = outputfile, quiet = True) #add 'stable = True' to the end of this list, if the stable-bug in muscle is fixed (remove the correct_for_muscle_bug() method in that case)
 		muscle_cline()
-		return outputfile
+		mp_output.put(outputfile)
 
 def read_alignments(input_filelist):
 	mylogger.info("read_alignments(input_filelist)")
@@ -477,6 +528,7 @@ def correct_for_muscle_bug(aligned_filelist, seq_filelist):
 	#without that function, the sequence order in the alignment might change, and that would be catastrophic for MLSA-analyses!
 	#This workaround method could become obsolete, when future muscle versions reimplement a correct '-stable' option (hopefully in version 3.9)
 	#In that case, add the option", stable = True" to the MuscleCommandline-call in 'call_muscle()'.
+	mylogger.debug("correct_for_muscle_bug(aligned_filelist, seq_filelist)")
 	mylogger.info("\n%s\ncorrecting sequence order in muscle alignments" % ("-" * 50))
 	
 	for f in range(len(aligned_filelist)):
@@ -631,25 +683,6 @@ def raxml(alignmentfile):
 def print_version():
 	print "\n ==PO_2_MLSA.py %s by John Vollmers==\n" % version
 
-def run_multiprocess_group(targetfunction, targetargs): #must start working with classes to avoid such long argument lists
-	if __name__ == '__main__': #just making sure function is only called within its intended context
-		maxlen = len(columns[0][1])
-		group_results = []
-		
-		mp_output = multiprocessing.Queue()
-		processes = [multiprocessing.Process(target=targetfunction, args=targetargs) for x in range(cpus)]
-		
-		for p in processes:
-			p.start()
-			
-		for p in processes:
-			p.join()
-			
-		group_results = [mp_output.get() for p in processes]
-		return group_results
-		
-	else:
-		raise RuntimeError("FORBIDDEN TO CALL THIS (MULTIPROCESSING) FUNCTION FROM AN EXTERNAL MODULE\n-->ABORTING")
 
 def main():
 	aligned_filelist, unaligned_filelist = [], []
@@ -660,9 +693,10 @@ def main():
 	try:
 		checkargs()
 		##move this to checkargs()
-		mylogger.info("-keep temporary files: %s" % args.keep_temp)
-		if not args.keep_temp and verbose:
-			mylogger.info("-->will delete all temporary files")
+		infotext = "-keep temporary files: %s" % args.keep_temp
+		if not args.keep_temp:
+			infotext += " --> will delete all temporary files "
+		mylogger.info(infotext)
 		mylogger.info("-using aligner '%s'" % args.alignmeth)
 		if gblocks in ["no", "n", "false", "f"]:
 			mylogger.info("-remove gaps: " + args.degap)
