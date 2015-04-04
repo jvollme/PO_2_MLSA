@@ -1,6 +1,6 @@
 #!/usr/bin/python
 #created 21.06.2014 by John Vollmers
-import os, sys, argparse, time, multiprocessing, random
+import os, sys, logging, argparse, time, multiprocessing, random, traceback
 from Bio.Align.Applications import ClustalwCommandline, MuscleCommandline, ClustalOmegaCommandline
 from Bio.Phylo.Applications import RaxmlCommandline
 from Bio import AlignIO, SeqIO
@@ -8,7 +8,7 @@ from Bio.Alphabet import IUPAC
 from subprocess import call
 
 myparser=argparse.ArgumentParser(description="\n==PO_2_MLSA.py v1.2 by John Vollmers==\nCreates concatenated alignments of UNIQUE Genes with orthologues in comparison organisms for the construction of MLSA-based phylogenetic trees.\nOptionally the resulting concatenated alignments may contain all gapped alignmentpositions or may be stripped either of ALL gapped positions or of all gapped positions in the flanking regions of each composite ortholog\nThis script is supposed to be part of a pipeline consisting of:\n\tA.)Conversion of Genbank/Embl-Files to ANNOTATED(!) Fastas using CDS_extractor.pl by Andreas Leimbach\n\tB.)Calculation of orthologs and paralogs using proteinortho5 (WITH the '-single' and '-self' arguments!)\n\tC.)The creation of concatenated MLSA-sequences based on:\n\t\t-the fasta sequences of step A\n\t\t-the proteinortho5-results from step B\n\nThe output-file will be in fasta format (but including gapped positions, so remember to use 'fasta_wgap' when loading into Arb!). However it's absolutely no problem to include other common output-alignmentformats on request!", formatter_class=argparse.RawTextHelpFormatter)
-myparser.add_argument("-po", "--proteinortho", action = "store", dest = "po_resultfile", help = "(String) file with proteinortho5 results", required = True)
+myparser.add_argument("-po", "--proteinortho", action = "store", dest = "PO_file", help = "(String) file with proteinortho5 results", required = True)
 myparser.add_argument("-f", "--fastas", action = "store", dest = "fasta_path", help = "(String) path to fasta files (produced by CDS_extractor) \nDefault = current working directory", default = "")
 myparser.add_argument("-tp", "--temp_path", action = "store", dest = "temp_path", default = "", help = "Path for temporary files (will be created if does not exist)\nDefault =  current working directory")
 myparser.add_argument("-kt", "--keep_temp", action = "store_true", dest = "keep_temp", default = False, help = "Keep all temporary files and intermediate results\n(Multifasta_files containing the singe genes involved in the MLSA-alignments are stored in any case)\nDefault: delete all temporary files")
@@ -29,6 +29,7 @@ myparser.add_argument("-bs", "--bootstraps", action = "store", dest = "nr_bootst
 #myparser.add_argument("-ctba", "--custom_tree_builder_args", action = "store", dest = "custom_tree_builder_args", default = None, help = "custom arguments for raxml. CAUTION: will overide Only use if you know ExACTLY what you are doing!")
 #^ still to implement
 myparser.add_argument("-v", "--version", action = "store_true", dest = "showversion", default = False, help = "show version information and then quit (don't run complete script)")
+myparser.add_argument("--debug", action = "store_true", dest = "debug", default = False, help = "Log extra info for debugging")
 args = myparser.parse_args()
 
 #TOdo: add option "return_selection" to store selection of MLSA genes as unagligned multifastas or only lists of fasta-headers
@@ -43,8 +44,8 @@ wstrings, estrings, lstrings = [], [], [] #warning, error and log messages respe
 #nthreads = args.nthreads
 #tree_method, bootstraps, seed = args.tree_method, args.nr_bootstraps, args.seed_nr
 #keep_temp = args.keep_temp
-outputfilename = os.path.join(args.outpath, "concatenated_orthologs_%s_%s.fasta" %(args.alignmeth, os.path.basename(args.PO_file)))
-logfilename = os.path.join(args.outpath, "PO_2_MLSA_%s.log" % time.strftime("%Y%m%d%H%M%S"))
+outputfilename = os.path.join(args.out_path, "concatenated_orthologs_%s_%s.fasta" %(args.alignmeth, os.path.basename(args.PO_file)))
+logfilename = os.path.join(args.out_path, "PO_2_MLSA_%s.log" % time.strftime("%Y%m%d%H%M%S"))
 raxml_prog = "raxmlHPC"
 verbose = True
 docontinue = True
@@ -52,52 +53,87 @@ gblocks = True
 if args.gblocks in ["n", "no", "f", "false"]:
 	gblocks = False
 gblocks_path = args.gblocks_path
+erroroccured, warningoccured = False, False
+hline = "-" * 50
+
+def setlogger(logfilename): #shall replace datsanerror, datsanlogmessage  datswarning
+	#format logger
+	logFormatter = logging.Formatter("[%(levelname)s]  %(message)s")
+	mylogger = logging.getLogger()
+	if args.debug:
+		mylogger.setLevel(logging.DEBUG)
+	else:
+		mylogger.setLevel(logging.INFO)
+		
+	#set logger to write to logfile
+	fileHandler = logging.FileHandler(logfilename)
+	fileHandler.setFormatter(logFormatter)
+	mylogger.addHandler(fileHandler)
+	
+	#set loger to write to stderr also
+	consoleHandler = logging.StreamHandler()
+	consoleHandler.setFormatter(logFormatter)
+	if args.no_verbose:
+		consoleHandler.setlevel(logging.WARNING)
+	mylogger.addHandler(consoleHandler)
+	
+	return mylogger
 
 def checkargs():
 	#print "CHECKING ARGS"
-	#global verbose, nthreads, tree_method, raxml_prog
+	global raxml_prog
 	global args, verbose
+	mylogger.debug("checkargs()")
+		
 	if args.no_verbose:
 		verbose = False
+		
 	if available_cores < args.nthreads:
-		datsAwarning("WARNING: less than %d cores/threads available! Setting nthreads to %d" %(args.nthreads, available_cores))
+		mylogger.warning("less than %d cores/threads available! Setting nthreads to %d" %(args.nthreads, available_cores))
 		args.nthreads = available_cores
+		
 	if args.fasta_path != "" and (not os.path.exists(args.fasta_path) or not os.path.isdir(args.fasta_path)):
-		datsANerror("ERROR: fasta_path: '%s' does not exist or is no directory!" % args.fasta_path)
+		raise OSError("fasta_path: '%s' does not exist or is no directory!" % args.fasta_path)
+		
 	if args.aligner_path != "":
 		if os.path.exists(args.aligner_path) and os.path.isdir(args.aligner_path):
 			if not os.path.exists(os.path.join(args.aligner_path, args.alignmeth)):
-				datsANerror("ERROR: can't find '%s' at %s" %(args.alignmeth, args.aligner_path))
+				raise OSError("can't find '%s' at %s" %(args.alignmeth, args.aligner_path))
 		else:
-			datsANerror("ERROR: aligner_path: '%s' does not exist or is not a directory!" % args.aligner_path)
+			raise OSError("aligner_path: '%s' does not exist or is not a directory!" % args.aligner_path)
 	elif args.aligner_path == "":
 		test_aligner = which(args.alignmeth)
 		if test_aligner == None:
-			datsANerror("Can't find %s in any directory in the PATH variable. Please provide a path" % args.alignmeth)
+			raise OSError("Can't find %s in any directory in the PATH variable. Please provide a path" % args.alignmeth)
+			
 	if not os.path.exists(args.PO_file) or not os.path.isfile(args.PO_file):
-		datsANerror("ERROR: cannot find proteinortho-resultfile: %s" % args.PO_file)
-	if args.temp_path != "" and docontinue: 
+		raise OSError("cannot find proteinortho-resultfile: %s" % args.PO_file)
+		
+	if args.temp_path != "" and docontinue:
 		if not os.path.exists(args.temp_path) or not os.path.isdir(args.temp_path):
-			if verbose: 
+			if verbose:
 				print "Creating directory for temporary and intermediate result files: %s" % args.temp_path
 			os.mkdir(args.temp_path)
-		datsAlogmessage("-Will store temporary and intermediate result files in %s" % os.path.abspath(args.temp_path))
-	if args.outpath != "" and docontinue: 
-		if not os.path.exists(args.outpath) or not os.path.isdir(args.outpath):
-			if verbose: 
-				print "Creating directory for final result files: %s" % args.outpath
-			os.mkdir(args.outpath)
-		datsAlogmessage("-Will store final result files in %s" % os.path.abspath(args.outpath))
+		mylogger.info("-Will store temporary and intermediate result files in %s" % os.path.abspath(args.temp_path))
+		
+	if args.out_path != "" and docontinue:
+		if not os.path.exists(args.out_path) or not os.path.isdir(args.out_path):
+			if verbose:
+				print "Creating directory for final result files: %s" % args.out_path
+			os.mkdir(args.out_path)
+		mylogger.info("-Will store final result files in %s" % os.path.abspath(args.out_path))
+		
 	if args.alignmeth == "clustalo" and docontinue: #check clustalo version
 		clustalomega_cline = ClustalOmegaCommandline("clustalo", version = True)
 		clustalo_version = clustalomega_cline()[0].rstrip().split(".")
 		if int(clustalo_version[0]) < 1 or (int(clustalo_version[0]) == 1 and int(clustalo_version[1]) < 2) : #only accept versions 1.2 and newer
-			datsANerror("ERROR: installed clustalo version is v%s ! Version 1.2 or higher is required!" % ".".join(clustalo_version))
+			raise OSError("installed clustalo version is v%s ! Version 1.2 or higher is required!" % ".".join(clustalo_version))
+			
 	if gblocks and docontinue:
 		if gblocks_path == "":
 			test_gblocks = which("Gblocks")
 			if test_gblocks == None:
-				datsANerror("ERROR: can't locate Gblocks in any path in PATH variable. please provide a Path to Gblocks using the '-gbp' agrument!")
+				raise OSError("can't locate Gblocks in any path in PATH variable. please provide a Path to Gblocks using the '-gbp' agrument!")
 			elif verbose:
 				print "Located Gblocks executable: %s" % test_gblocks
 		else:
@@ -109,28 +145,29 @@ def checkargs():
 				if verbose:
 					print "Located Gblocks executable: %s" % gblocks_path
 			else:
-				datsANerror("ERROR: Gblocks executable could not be found in the specified path: %s" % gblocks_path)
+				raise OSError("Gblocks executable could not be found in the specified path: %s" % gblocks_path)
+				
 	if args.tree_method != "none":
 		#print "CHECKING raxml-binaries"
 		if args.treebuilder_path == "":
 			if which("raxmlHPC") == None and which("raxmlHPC-PTHREADS") == None and which("raxmlHPC-PTHREADS-SSE3") == None and which("raxmlHPC-SSE3") == None:
-				datsANerror("ERROR: No raxmlHPC binaries found in any directory within $PATH! please provide a PATH to raxml binaries!")
+				raise OSError("ERROR: No raxmlHPC binaries found in any directory within $PATH! please provide a PATH to raxml binaries!")
 				args.tree_method = "none"
 			else:
 				if which("raxmlHPC-PTHREADS-SSE3") != None:
 					raxml_prog = which("raxmlHPC-PTHREADS-SSE3")
-					datsAlogmessage("found "+raxml_prog+ "! will use this tool") 
+					mylogger.info("found "+raxml_prog+ "! will use this tool")
 				elif which("raxmlHPC-PTHREADS") != None:
 					raxml_prog = which("raxmlHPC-PTHREADS")
-					datsAlogmessage("found "+raxml_prog+ "! will use this tool")
+					mylogger.info("found "+raxml_prog+ "! will use this tool")
 				else:
-					datsAwarning("Warning: multithreading is only supported with 'PTHREADS'-versions of raxml. Not sure if your raxml binaries support this.\t\nif raxml calculations fail, recombile raxml with 'PTHREADS'-option")
+					mylogger.warning("multithreading is only supported with 'PTHREADS'-versions of raxml. Not sure if your raxml binaries support this.\t\nif raxml calculations fail, recombile raxml with 'PTHREADS'-option")
 					if which("raxmlHPC-SSE3") != None:
 						raxml_prog = which("raxmlHPC-SSE3")
-						datsAlogmessage("found "+raxml_prog+ "! will use this tool")
+						mylogger.info("found "+raxml_prog+ "! will use this tool")
 					else:
 						raxml_prog = which("raxmlHPC")
-						datsAlogmessage("found "+raxml_prog+ "! will use this tool")
+						mylogger.info("found "+raxml_prog+ "! will use this tool")
 				try:
 					checkraxml_cline = RaxmlCommandline(raxml_prog, version = True)
 					versiontext = checkraxml_cline()[0]
@@ -138,12 +175,12 @@ def checkargs():
 					endv = versiontext[startv:].find(" ")
 					version = versiontext[startv:startv+endv].split(".")
 					if int(version[0]) < 8 or (int(version[0]) == 8 and int(version[1]) == 0 and int(version[2]) < 20):
-						datsAwarning("Warning: This script was devised for and tested with RAxML v8.0.20. Your version is v%s !\n\tThis may very well still work, but if it doesn't it's YOUR fault!" % ".".join(version))
+						mylogger.warning("This script was devised for and tested with RAxML v8.0.20. Your version is v%s !\n\tThis may very well still work, but if it doesn't it's YOUR fault!" % ".".join(version))
 				except:
-					datsAwarning("Warning: This script was devised for and tested with RAxML v8.0.20.\n\tNot sure which version of RAxML you're using, but it sure as hell isn't v7 or v8!\n\tThis may very well still work, but if it doesn't it's YOUR fault!")
+					mylogger.warning("This script was devised for and tested with RAxML v8.0.20.\n\tNot sure which version of RAxML you're using, but it sure as hell isn't v7 or v8!\n\tThis may very well still work, but if it doesn't it's YOUR fault!")
 		elif os.path.exists(args.treebuilder_path) and os.path.isfile(args.treebuilder_path):
 			if args.nthreads > 1 and not "PTHREADS" in args.treebuilder_path:
-				datsAwarning("Warning: multithreading is only supported with 'PTHREADS'-versions of raxml. Not sure if your choosen binaries support this.\t\nif raxml calculations fail, recombile raxml with 'PTHREADS'-option") 
+				mylogger.warning("multithreading is only supported with 'PTHREADS'-versions of raxml. Not sure if your choosen binaries support this.\t\nif raxml calculations fail, recombile raxml with 'PTHREADS'-option")
 			try:
 				checkraxml_cline = RaxmlCommandline(version = True)
 				versiontext = checkraxml_cline()[0]
@@ -151,60 +188,45 @@ def checkargs():
 				endv = versiontext[startv:].find(" ")
 				version = versiontext[startv:startv+endv].split(".")
 				if int(version[0]) < 8 or (int(version[0]) == 8 and int(version[1]) == 0 and int(version[2]) < 20):
-						datsAwarning("Warning: This script was devised for and tested with RAxML v8.0.20. Your version is v%s !\n\tThis may very well still work, but if it doesn't it's YOUR fault!" % ".".join(version))
+						mylogger.warning("This script was devised for and tested with RAxML v8.0.20. Your version is v%s !\n\tThis may very well still work, but if it doesn't it's YOUR fault!" % ".".join(version))
 				raxml_prog = args.treebuilder_path
+				
 			except:
-				datsAwarning("Warning: Correct raxML-version not found under %s !\nWill NOT calculate ML trees!" % args.treebuilder_path)
-				args.tree_method = "none" 
+				mylogger.warning("Correct raxML-version not found under %s !\nWill NOT calculate ML trees!" % args.treebuilder_path)
+				args.tree_method = "none"
 
-def datsAwarning(wstring):
-	global wstrings
-	wstrings.append(wstring)
-	if verbose:
-		print "\n" + wstring + "\n"
-
-def datsANerror(estring):
-	global estrings
-	global docontinue
-	estrings.append(estring)
-	docontinue = False
-	if verbose:
-		print >>sys.stderr, "\n" + estring + "\n"
-
-def datsAlogmessage(lstring):
-	global lstrings
-	lstrings.append(lstring)
-	if verbose:
-		print lstring
-
-def which(file):
+def which(thisfile):
+	mylogger.debug("which(%s)", thisfile)
 	for path in os.environ["PATH"].split(":"):
-		if os.path.exists(path + "/" + file):
-			return path + "/" + file
+		if os.path.exists(path + "/" + thisfile):
+			return path + "/" + thisfile
 	return None
 
 def read_PO_file(filename):
+	mylogger.debug("read_PO_file(%s)" % filename)
 	open_PO_file = open(filename, 'r')
 	firstline = True
 	org_index = 3 #default index of beginning of organism-result-columns in proteinortho4+
 	headers = []
 	MLSA_gene_counter = 0
 	MLSA_list = []
+	
 	for line in open_PO_file:
 		if firstline:
 			if line.startswith("#species"):
-				datsAwarning("WARNING! It seems you are using results from Proteinortho4. It's recommended to use Proteinortho5 or later!\n\t(However, the derivation of MLSA genes should still work)")
+				mylogger.warning("It seems you are using results from Proteinortho4. It's recommended to use Proteinortho5 or later!\n\t(However, the derivation of MLSA genes should still work)")
 			elif line.startswith("# Species"):
 				if verbose:
 					print "\nProteinortho-results seem to be based on Proteinortho5 or later. Good."
 			else:
-				datsAwarning("WARNING! Cannot clearly recognize Format of Proteinortho-results! This may produce erroneous results!\n\t For best results use Proteinortho5!") 
+				mylogger.warning("Cannot clearly recognize Format of Proteinortho-results! This may produce erroneous results!\n\t For best results use Proteinortho5!")
 			headers = line.split("\t")[org_index:]
 			#remove line_end_symbols:
 			for h in range(len(headers)):
 				headers[h] = headers[h].rstrip()
 			MLSA_list = [[header, []] for header in headers]
 			firstline = False
+			
 		elif not line.startswith("#"):
 			if not "," in line:
 				if not "*" in line:
@@ -217,19 +239,25 @@ def read_PO_file(filename):
 						break
 					for h in range(len(headers)):
 						MLSA_list[h][1].append(zeilentokens[h].rstrip())
+						
 	open_PO_file.close()
 	#check if everything is ok before continuing
 	for org in MLSA_list:
 		if len(org[1]) != len(MLSA_list[0][1]):
-			datsANerror("ERROR: something went wrong while reading proteinortho-results. Not the same number of comparison genes for all Organisms!")
-	datsAlogmessage("\nrecognized %d unambigious ( = unique) 'Orthologeous Groups' (OGs) shared by the comparison organisms" % len(MLSA_list[0][1]))
+			raise OSError("something went wrong while reading proteinortho-results. Not the same number of comparison genes for all Organisms!")
+			
+	mylogger.info("\nrecognized %d unambigious ( = unique) 'Orthologeous Groups' (OGs) shared by the comparison organisms" % len(MLSA_list[0][1]))
 	OG_number = len(MLSA_list[0][1])
+	
 	return headers, MLSA_list, OG_number
 
 def read_fasta_seqs(headers, MLSA_list):
+	mylogger.debug("read_fasta_seqs(headers, MLSA_list)")
 	record_dict = dict.fromkeys(headers, {})
+	
 	for org in record_dict:
 		record_dict[org] = {}
+		
 	for h in range(len(headers)):
 		print headers[h]
 		if MLSA_list[h][0] != headers[h]:
@@ -245,22 +273,28 @@ def read_fasta_seqs(headers, MLSA_list):
 				record_dict[headers[h]][record.id] = record
 		#add another check_function here!!
 		open_fastafile.close()
+		
 	return record_dict
 
 def write_seq_files(record_dict, MLSA_list):
+	mylogger.debug("write_seq_files(record_dict, MLSA_list)")
 	selection_filelist = []
+
 	for orgindex in range(len(MLSA_list)):
-		tempfilename = os.path.join(args.outpath, "OGselection_MLSA_single_unaligned_multifasta_%s" % MLSA_list[orgindex][0])
+		tempfilename = os.path.join(args.out_path, "OGselection_MLSA_single_unaligned_multifasta_%s" % MLSA_list[orgindex][0])
 		selection_filelist.append(tempfilename)
 		open_tempfile = open(tempfilename, 'w')
 		for locus in MLSA_list[orgindex][1]:
 			SeqIO.write([record_dict[MLSA_list[orgindex][0]][locus]], open_tempfile, "fasta")
 		open_tempfile.close()
+		
 	return selection_filelist
 
 def write_temp_files(record_dict, MLSA_list, prefix):
+	mylogger.debug("write_temo_files(record_dict, MLSA_list, %s)" % prefix)
 	unaligned_filelist = []
-	OG_counter = 0 #numbering of the used 'Orthologeous Groups'(OGs), to differentiate between the different temp_files 
+	OG_counter = 0 #numbering of the used 'Orthologeous Groups'(OGs), to differentiate between the different temp_files
+	
 	for locusindex in range(len(MLSA_list[0][1])):
 		OG_counter += 1
 		tempfilename = os.path.join(args.temp_path, prefix + str(OG_counter).zfill(5) + ".fasta")
@@ -269,11 +303,14 @@ def write_temp_files(record_dict, MLSA_list, prefix):
 		for orgindex in range(len(MLSA_list)):
 			SeqIO.write([record_dict[MLSA_list[orgindex][0]][MLSA_list[orgindex][1][locusindex]]], open_tempfile, "fasta")
 		open_tempfile.close()
+		
 	return unaligned_filelist
 
 def write_temp_alignments(alignmentlist, prefix):
+	mylogger.debug("write_temp_alignments(alignmentlist, %s)" % prefix)
 	proc_aligned_filelist = []
-	OG_counter = 0 #numbering of the used 'Orthologeous Groups'(OGs), to differentiate between the different temp_files 
+	OG_counter = 0 #numbering of the used 'Orthologeous Groups'(OGs), to differentiate between the different temp_files
+
 	for index in range(len(alignmentlist)):
 		OG_counter += 1
 		alignfilename = os.path.join(args.temp_path, prefix + str(OG_counter).zfill(5) + ".fasta")
@@ -281,20 +318,22 @@ def write_temp_alignments(alignmentlist, prefix):
 		open_tempfile = open(alignfilename, 'w')
 		AlignIO.write([alignmentlist[index]], open_tempfile, "fasta")
 		open_tempfile.close()
+		
 	return proc_aligned_filelist
 
 def make_alignments(unaligned_filelist):
-	if verbose:
-		print "\n----------------------------------"
-		print "Aligning Orthologeous Groups (OGs)"
+	mylogger.debug("make_alignments(unaligned_filelist)")
+	mylogger.info("\n%s\nAligning Orthologeous Groups (OGs)" % hline)
 	aligned_filelist = []
 	counter = 0
+	
 	for uf in unaligned_filelist:
 		counter += 1
 		if verbose:
 			sys.stdout.write("\raligning OG %d from %d using %s" %(counter, len(unaligned_filelist), args.alignmeth))
 			sys.stdout.flush()
 		aligned_filelist.append(eval(args.alignmeth)(uf))
+		
 	return aligned_filelist
 
 def clustalw(inputfile):#Todo: change number of threads
@@ -325,24 +364,30 @@ def muscle(inputfile):#changing the number of threads aparently not possible
 		return outputfile
 
 def read_alignments(input_filelist):
+	mylogger.info("read_alignments(input_filelist)")
 	alignmentlist = []
 	if args.alignmeth == "muscle" or args.alignmeth == "clustalo" or len(input_filelist) == 1: #Last condition assumes that ONLY final result files would be passed as a filelist of only one file
 		aformat = "fasta"# just a workaround for this method
 	else:
 		aformat = "clustal"
+		
 	for alignmentfile in input_filelist:
 		currentalignfile = open(alignmentfile, 'r')
 		alignmentlist.append(AlignIO.read(currentalignfile, aformat))
 		currentalignfile.close()
+		
 	if len(alignmentlist) != len(input_filelist):
-		datsANerror("ERROR: could not read in all temporary alignmentfiles!")
+		raise OSError("could not read in all temporary alignmentfiles!")
+		
 	return alignmentlist
 
 def remove_gaps_from_alignment_borders(alignmentlist): #optional. Better to use Gblocks if available
+	mylogger.debug("remove_gaps_from_alignment_borders(alignmentlist)")
 	global outputfilename
 	global proc_aln_length
 	outputfilename = outputfilename.replace("concatenated_orthologs_", "concatenated_orthologs_FlankingBordersDegapped_")
 	processed_alignmentlist = []
+	
 	for currentalignment in alignmentlist:
 		start, stop = 0, len(currentalignment[0])
 		for c in range(stop): #identify start of alignable region
@@ -355,19 +400,23 @@ def remove_gaps_from_alignment_borders(alignmentlist): #optional. Better to use 
 				stop += nc # = maxlength minus endposition
 				break
 		processed_alignmentlist.append(currentalignment[:, start:stop + 1])
+		
 	#print "keep_temp: " + str(args.keep_temp)
 	if args.keep_temp == True:
 		#print "keep_temp is 'True' --> will produce prossessed single alignment files"
 		write_temp_alignments(processed_alignmentlist, "Processed_removedFLANKINGgaps_SINGLEalignment_MUSCLE_temp_fasta_OG")
+		
 	return processed_alignmentlist
 
 def remove_gaps_from_complete_alignments(alignmentlist): #optional. Better to use Gblocks if available
+	mylogger.debug("remove_gaps_from_complete_alignments(alignmentlist)")
 	global outputfilename
 	global proc_aln_length
 	outputfilename = outputfilename.replace("concatenated_orthologs_", "concatenated_orthologs_AllDegapped_OG")
 	processed_alignmentlist = []
 	counter = 0
 	maxnumber = len(alignmentlist)
+	
 	for currentalignment in alignmentlist:
 		counter += 1
 		sys.stdout.write("\rprocessing alignment %d of %d" %(counter, maxnumber))
@@ -378,23 +427,28 @@ def remove_gaps_from_complete_alignments(alignmentlist): #optional. Better to us
 				processed_alignment += currentalignment[:, c:(c + 1)]
 		processed_alignmentlist.append(processed_alignment)
 	#print "keep_temp: " + str(args.keep_temp)
+	
 	if args.keep_temp == True:
 		#print "keep_temp is 'True' --> will produce prossessed single alignment files"
 		write_temp_alignments(processed_alignmentlist, "Processed_removedALLgaps_SINGLEalignment_MUSCLE_temp_fasta_OG")
+		
 	return processed_alignmentlist
 
 def concatenate_alignments(alignment_list, headers):
+	mylogger.debug("concatenate_alignments(alignment_list, headers)")
 	global aln_length
 	suffix_list = ["_cds_aa.fasta", ".fasta", ".fas", ".faa", ".fa"]#list of most probable input-sequence suffixes for removal from sequence identifier
 	counter = 0
 	maxnumber = len(alignment_list)
 	concatenated_alignment = alignment_list[0][:, 0:0]
+	
 	for alignment in alignment_list:
 		counter += 1
 		sys.stdout.write("\rconcatenating alignment %d of %d" %(counter, maxnumber))
 		sys.stdout.flush()
 		concatenated_alignment += alignment
 	del alignment_list #not needed anymore --> free up memory
+	
 	if len(concatenated_alignment) == len(headers): #len(concatenated_alignment) counts the NUMBER of comparison sequences, not their length
 		for index in range(len(headers)): #renaming the concatenated sequences (otherwise they will just be named after the first ortholog)
 			newid = headers[index]
@@ -405,38 +459,26 @@ def concatenate_alignments(alignment_list, headers):
 			concatenated_alignment[index].id = newid
 			concatenated_alignment[index].description = "concatenated_unique_coregenome"
 	else:
-		datsANerror("ERROR: Records in concatenated_alignment and headers are not synchronized!")
+		raise RuntimeError("Records in concatenated_alignment and headers are not synchronized!")
+		
 	if len(concatenated_alignment) != 0:
 		 aln_length = len(concatenated_alignment[0])
+		
 	return concatenated_alignment
 
 def write_final_alignment(outputfilename, concatenated_alignment):
+	mylogger.debug("write_final_alignment(%s, concatenated_alignment)" % outputfilename)
 	outputfile = open(outputfilename, 'w')
 	AlignIO.write(concatenated_alignment, outputfilename, "fasta")
-	outputfile.close() 
-
-def write_logfile(logfilename):
-	logfile = open(logfilename, 'w')
-	logfile.write("PO_2_MLSA.py logfile")
-	logfile.write("\n" + time.strftime("%c"))
-	logfile.write("\nMessages\n:")
-	for l in lstrings:
-		logfile.write(l + "\n")
-	logfile.write("\n-----------\nWarnings:\n")
-	for w in wstrings:
-		logfile.write(w + "\n")
-	logfile.write("\n------------\nErrors:\n")
-	for e in estrings:
-		logfile.write(e + "\n")
-	logfile.close()
+	outputfile.close()
 
 def correct_for_muscle_bug(aligned_filelist, seq_filelist):
 	#this def is a necessary workaround for the missing "stable" function of "muscle", which has been deactivated due to the discovery of a bug in this function
-	#whithout that function, the sequence order in the alignment might change, and that would be catastrophic for MLSA-analyses!
+	#without that function, the sequence order in the alignment might change, and that would be catastrophic for MLSA-analyses!
 	#This workaround method could become obsolete, when future muscle versions reimplement a correct '-stable' option (hopefully in version 3.9)
 	#In that case, add the option", stable = True" to the MuscleCommandline-call in 'call_muscle()'.
-	print "\n----------------------------------"
-	print "correcting sequence order in muscle alignments"
+	mylogger.info("\n%s\ncorrecting sequence order in muscle alignments" % ("-" * 50))
+	
 	for f in range(len(aligned_filelist)):
 		sys.stdout.write("\rcorrecting alignmentfile %d of %d" %(f + 1, len(aligned_filelist)))
 		alignmentfile = aligned_filelist[f]
@@ -446,10 +488,12 @@ def correct_for_muscle_bug(aligned_filelist, seq_filelist):
 		seqs = []
 		seq_file = seq_filelist[f]
 		seq_handle = open(seq_file, 'r')
+		
 		for record in SeqIO.parse(seq_handle, "fasta"):
 			seqs.append(record)
 		seq_handle.close()
 		corrected = None
+		
 		for x in range(len(seqs)):
 			for y in range(len(alignment)):
 				#print str(x) + " " + seqs[x].id + " == " + alignment[y].id
@@ -461,269 +505,255 @@ def correct_for_muscle_bug(aligned_filelist, seq_filelist):
 						corrected.append(alignment[y])
 				#else:
 				#	print "False"
+				
 		alignmenthandle = open(alignmentfile, 'w')
 		AlignIO.write([corrected], alignmenthandle, "fasta")
-		alignmenthandle.close()	
+		alignmenthandle.close()
+		
 	return corrected
 
 def rename_for_gblocks(align_file):
+	mylogger.debug("rename_for_gblocks(%s)" % align_file)
 	#temporarily rename sequences, so that gblocks doesn't freak out
-	print "renaming sequences before gblocks"
+	mylogger.info("renaming sequences before gblocks")
 	alignment = read_alignments([align_file])[0]
 	index = 1
 	temp_name_dict = {}
-	tempfile_name = align_file + "_" + "deltemp_indexed_alignments_" + time.strftime("%Y%m%d%H%M%S")
+	tempfile_name = "%s_deltemp_indexed_alignments_%s" %(align_file, time.strftime("%Y%m%d%H%M%S"))
+	
 	for al in alignment:
-		print "renaming %s to %d" %(al.id, index)
+		mylogger.info("renaming %s to %d" %(al.id, index))
 		temp_name_dict[str(index)] = al.id
 		al.id = str(index)
 		al.description = ""
 		index += 1
+		
 	write_final_alignment(tempfile_name, alignment)
-	#print "rename_dict:"
-	#print temp_name_dict
+	
 	return tempfile_name, temp_name_dict
 
 def rename_after_gblocks(align_file, temp_name_dict, final_filename):
-	print "renaming sequences back after gblocks"
+	mylogger.debug("rename_after_gblocks(%s, temp_name_dict, %s)" %(align_file, final_filename))
+	mylogger.info("renaming sequences back after gblocks")
 	alignment = read_alignments([align_file])[0]
+	
 	for al in alignment:
 		#print "renaming " + al.id + " to " + temp_name_dict[al.id]
 		al.id = temp_name_dict[al.id]
 		al.description = "gblocks-filtered concatenated coregenome"
+		
 	write_final_alignment(final_filename, alignment)
 
-def call_Gblocks(file_name): #this calls Gblocks with standard settings. I tried not to overload the argument list for this python script 
+def call_Gblocks(file_name): #this calls Gblocks with standard settings. I tried not to overload the argument list for this python script
+	mylogger.debug("call_Gblocks(%s)" % file_name)
 	tempfile_name, temp_name_dict = rename_for_gblocks(file_name)
 	gblocks_args = ['-t=p', '-e=-gb', '-d=n']
+	
 	gblocks_command = [os.path.join(gblocks_path, "Gblocks"), tempfile_name] + gblocks_args
-	#print "TEST: " + " ".join(gblocks_command)
 	call(gblocks_command)
 	rename_after_gblocks(tempfile_name + "-gb", temp_name_dict, file_name + "-gb")
+	
 	os.remove(tempfile_name)
 	os.remove(tempfile_name + "-gb")
+
 	return file_name + "-gb"
 
 def randomnumber():
+	mylogger.debug("randomnumber()")
 	#returns a random integer to use as seed for rxml and pyml
 	random.seed()
+	
 	return random.randint(1, 2000)
 
 def raxml_rapidbs(alignmentfile): #parameters should be a dictionary (This dictionary thing was introduced, so that the script can be more easily adapted to accept custom commandline-parameters for raxml by the user)
-#	nr_threads = 4
-#	if "-T" in parameters:
-#		nr_threads = parameters["-T"]
-#	bootstraps = 1000
-#	if "-N" in parameters:
-#		bootstraps = parameters["-N"]
-#	elif "-#" in parameters:
-#		bootstraps = parameters["-#"]
+	mylogger.debug("raxml_rapidbs(%s)" % alignmentfile)
+	mylogger.info("Calculating phylogenies: 'rapid bootstrap analyses and search for best-scoring ML Tree in one run' using raxmlHPC and " + str(args.nthreads) + " threads")
 	
-	datsAlogmessage("Calculating phylogenies: 'rapid bootstrap analyses and search for best-scoring ML Tree in one run' using raxmlHPC and " + str(nr_threads) + " threads")
-	try:
-		outname = "MLSA_rapidBS" + str(args.nr_bootstraps) + "_" + time.strftime("%Y%m%d%H%M%S") + "_" + "final_tree"
-		raxml_cline = RaxmlCommandline(raxml_prog, sequences = alignmentfile, algorithm = "a", model = "PROTGAMMAAUTO", name = outname, parsimony_seed = args.seed_nr, rapid_bootstrap_seed = args.seed_nr, num_replicates = args.nr_bootstraps, threads = nr_threads) 
-		datsAlogmessage("-->" + str(raxml_cline))
-		raxml_cline()
-		datsAlogmessage("-->SUCCESS")
-		#the resultfiles will be: "RAxML_bipartitions.rapidBS_final_tree" and "RAxML_bipartitionsBranchLabels.rapidBS_final_tree"
-		#Labels on nodes or branches, respectively
-		outputfiles = ["RAxML_bipartitions." + outname, "RAxML_bipartitionsBranchLabels." + outname]
-	except Exception as e:
-		#note for future versions: create a custom exception "raxml_except" instead of using this construct over and over!
-		datsAlogmessage("-->FAILURE")
-		datsAwarning("WARNING: rapid bootstrap analyses and search for best-scoring ML tree using raxmlHPC has failed!\n\t" + str(e))	
-		return None
-	return outputfiles
+	outname = "MLSA_rapidBS%d_%s_final_tree" %(args.nr_bootstraps, time.strftime("%Y%m%d%H%M%S"))
+	raxml_cline = RaxmlCommandline(raxml_prog, sequences = alignmentfile, algorithm = "a", model = "PROTGAMMAAUTO", name = outname, parsimony_seed = args.seed_nr, rapid_bootstrap_seed = args.seed_nr, num_replicates = args.nr_bootstraps, threads = args.nthreads)
+	mylogger.info("-->" + str(raxml_cline))
+	raxml_cline()
+	mylogger.info("-->SUCCESS")
+	
+	#the resultfiles will be: "RAxML_bipartitions.rapidBS_final_tree" and "RAxML_bipartitionsBranchLabels.rapidBS_final_tree"
+	#Labels on nodes or branches, respectively
+	outputfiles = ["RAxML_bipartitions." + outname, "RAxML_bipartitionsBranchLabels." + outname]
 
 def raxml_bs(alignmentfile):
-#	nr_threads = 4
-#	if "-T" in parameters:
-#		nr_threads = parameters["-T"]
-#	bootstraps = 1000
-#	if "-N" in parameters:
-#		bootstraps = parameters["-N"]
-#	elif "-#" in parameters:
-#		bootstraps = parameters["-#"]
-	datsAlogmessage("Calculating phylogenies: Thorough bootstrap analyses with raxml")
-		
-	datsAlogmessage("\tDetermining best ML tree of 20 raxmlHPC runs using " + str(nr_threads) + " threads") 
-	try:
-		raxml_cline = RaxmlCommandline(raxml_prog, model = "PROTGAMMAAUTO", name = "best_delme_tempfile", parsimony_seed = args.seed_nr, num_replicates = 20, sequences = alignmentfile, threads = nr_threads) 
-		datsAlogmessage("\t-->" + str(raxml_cline))
-		raxml_cline()
-		#the resultfile will be :"RAxML_bestTree.best_delme_tempfile"
-		datsAlogmessage("\t-->SUCCESS")
-	except Exception as e:
-		datsAlogmessage("\t--FAILURE")
-		datsAwarning("WARNING: thorough bootstrap analyses using raxmlHPC failed!\n\t" + str(e))
-		return None
+	mylogger.debug("raxml_bs(%s)" % alignmentfile)
+	mylogger.info("Calculating phylogenies: Thorough bootstrap analyses with raxml")
+	mylogger.info("\tDetermining best ML tree of 20 raxmlHPC runs using %d threads" % args.nthreads)
 	
-	datsAlogmessage("\tDoing bootstrap analyses with " + str(args.nr_bootstraps) + " runs using raxmlHPC using " + str(nr_threads) + " threads")
-	try:
-		raxml_cline = RaxmlCommandline(raxml_prog, model = "PROTGAMMAAUTO", sequences = alignmentfile, name = "boot_delme_tempfile", parsimony_seed = args.seed_nr, bootstrap_seed = args.seed_nr, num_replicates = args.nr_bootstraps, threads = nr_threads)
-		datsAlogmessage("\t-->" + str(raxml_cline))
-		raxml_cline()
-		#the resultfile will be: "RAxML_bootstrap.boot_delme_tempfile"
-		datsAlogmessage("\t-->SUCCESS")
-	except Exception as e:
-		datsAlogmessage("\t-->FAILURE")
-		datsAwarning("WARNING: thorough bootstrap analyses using raxmlHPC failed!\n\t" + str(e))
-		return None
-		
-	datsAlogmessage("\tDrawing bipartitions of bootstrap trees onto best ML tree using raxmlHPC using " + str(nr_threads) + " threads")
-	try:
-		outname = "MLSA_raxmlBS" + str(args.nr_bootstraps) + "_" + time.strftime("%Y%m%d%H%M%S") + "_" + "final_tree"
-		raxml_cline = RaxmlCommandline(raxml_prog, model = "PROTGAMMAAUTO", parsimony_seed = args.seed_nr, algorithm = "b", starting_tree = "RAxML_bestTree.best_delme_tempfile", bipartition_filename = "RAxML_bootstrap.boot_delme_tempfile", name = outname)
-		datsAlogmessage("\t-->" + str(raxml_cline))
-		raxml_cline()
-		#The resultfiles will be: RAxML_bipartitions.final_tree" and "RAxML_bipartitionsBranchLabels.final_tree"
-		outputfiles = ["RAxML_bipartitions." + outname, "RAxML_bipartitionsBranchLabels." + outname]
-		datsAlogmessage("\t-->SUCCESS")	
-	except Exception as e:
-		datsAlogmessage("\t-->FAILURE")
-		datsAwarning("WARNING: thorough bootstrap analyses using raxmlHPC failed!\n\t" + str(e))
-		return None
+	raxml_cline = RaxmlCommandline(raxml_prog, model = "PROTGAMMAAUTO", name = "best_delme_tempfile", parsimony_seed = args.seed_nr, num_replicates = 20, sequences = alignmentfile, threads = args.nthreads)
+	mylogger.info("\t-->" + str(raxml_cline))
+	raxml_cline()
+	#the resultfile will be :"RAxML_bestTree.best_delme_tempfile"
+	mylogger.info("\t-->SUCCESS")
+	
+	mylogger.info("\tDoing bootstrap analyses with %d runs using raxmlHPC using %d threads" %(args.nr_bootstraps, args.nthreads))
+	
+	raxml_cline = RaxmlCommandline(raxml_prog, model = "PROTGAMMAAUTO", sequences = alignmentfile, name = "boot_delme_tempfile", parsimony_seed = args.seed_nr, bootstrap_seed = args.seed_nr, num_replicates = args.nr_bootstraps, threads = args.nthreads)
+	mylogger.info("\t-->" + str(raxml_cline))
+	raxml_cline()
+	#the resultfile will be: "RAxML_bootstrap.boot_delme_tempfile"
+	mylogger.info("\t-->SUCCESS")
+	
+	mylogger.info("\tDrawing bipartitions of bootstrap trees onto best ML tree using raxmlHPC using " + str(args.nthreads) + " threads")
+	
+	outname = "MLSA_raxmlBS" + str(args.nr_bootstraps) + "_" + time.strftime("%Y%m%d%H%M%S") + "_" + "final_tree"
+	raxml_cline = RaxmlCommandline(raxml_prog, model = "PROTGAMMAAUTO", parsimony_seed = args.seed_nr, algorithm = "b", starting_tree = "RAxML_bestTree.best_delme_tempfile", bipartition_filename = "RAxML_bootstrap.boot_delme_tempfile", name = outname)
+	mylogger.info("\t-->" + str(raxml_cline))
+	raxml_cline()
+	
+	#The resultfiles will be: RAxML_bipartitions.final_tree" and "RAxML_bipartitionsBranchLabels.final_tree"
+	outputfiles = ["RAxML_bipartitions." + outname, "RAxML_bipartitionsBranchLabels." + outname]
+	mylogger.info("\t-->SUCCESS")
 	return outputfiles
 
-def raxml(alignmentfile, outputfilename, seed, parameters):
-	nr_threads = 4
-	if "-T" in parameters:
-		nr_threads = parameters["-T"]
-	try:
-		outname = "MLSA_raxml_%s_final_tree" % time.strftime("%Y%m%d%H%M%S")
-		datsAlogmessage("Calculating phylogeny: Determining best ML tree of 20 raxmlHPC runs using %d threads" % nr_threads)
-		raxml_cline = RaxmlCommandline(raxml_prog, sequences = alignmentfile, model = "PROTGAMMAAUTO", name = outname,  parsimony_seed = args.seed_nr, num_replicates = 20, threads = nr_threads)
-		datsAlogmessage("\t-->" + str(raxml_cline))
-		raxml_cline()
-		#the resultfile will be :"RAxML_bestTree.final_tree"
-		outputfiles = ["RAxML_bestTree." + outname]
-		datsAlogmessage("\tSUCCESS")
-		print "deleting temporary files"
-		for delfile in os.listdir("."):
-			if delfile.startswith("RAxML_") and "." + outname + ".RUN." in delfile:
-				#print "deleting temp-file: " + delfile
-				os.remove(delfile)
-	except Exception as e:
-		datsAlogmessage("\t-->FAILURE")
-		datsAwarning("WARNING: searching for best ML tree using raxmlHPC failed!\n\t" + str(e))
-		return None
+def raxml(alignmentfile):
+	mylogger.debug("raxml(%s)" % alignmentfile)
+	outname = "MLSA_raxml_%s_final_tree" % time.strftime("%Y%m%d%H%M%S")
+	mylogger.info("Calculating phylogeny: Determining best ML tree of 20 raxmlHPC runs using %d threads" % args.nthreads)
+#	raxml_cline = RaxmlCommandline(raxml_prog, sequences = alignmentfile, model = "PROTGAMMAAUTO", name = outname,  parsimony_seed = args.seed_nr, num_replicates = 20, threads = args.nthreads)
+	raxml_cline = RaxmlCommandline(raxml_prog, sequences = alignmentfile, model = "PROTGAMMAAUTO", name = outname,  parsimony_seed = args.seed_nr, num_replicates = 2, threads = args.nthreads)
+	mylogger.info("\t-->" + str(raxml_cline))
+	raxml_cline()
+	#the resultfile will be :"RAxML_bestTree.final_tree"
+	outputfiles = ["RAxML_bestTree." + outname]
+	mylogger.info("\tSUCCESS")
+	print "deleting temporary files"
+	for delfile in os.listdir("."):
+		if delfile.startswith("RAxML_") and "." + outname + ".RUN." in delfile:
+			#print "deleting temp-file: " + delfile
+			os.remove(delfile)
 	return outputfiles
 
 def print_version():
 	print "\n ==PO_2_MLSA.py %s by John Vollmers==\n" % version
 
-def main():
-	global args, docontinue
-	if verbose:
-		print_version()
-	checkargs(args)
-	if docontinue:
-		datsAlogmessage("-keep temporary files: %s" % args.keep_temp)
-		if not args.keep_temp and verbose:
-			print "-->will delete all temporary files"
-		datsAlogmessage("-using aligner '%s'" % args.alignmeth)
-		if gblocks in ["no", "n", "false", "f"]:
-				datsAlogmessage("-remove gaps: " + args.degap)
-		else:
-			datsAlogmessage("-remove gaps: <OVERRIDDEN>\n-->will use Gblocks (with standard settings) on final result files for removal of gapped positions and poorly conserved regions")
-		if docontinue:
-			headers, MLSA_list, OG_number = read_PO_file(args.PO_file)
-			if docontinue:
-				record_dict = read_fasta_seqs(headers, MLSA_list)
-				if docontinue:
-						seq_filelist = write_seq_files(record_dict, MLSA_list)			
-						unaligned_filelist = write_temp_files(record_dict, MLSA_list, "unaligned_temp_fasta_OG")
-						aligned_filelist = make_alignments(unaligned_filelist)
-						if args.alignmeth == "muscle":
-							correct_for_muscle_bug(aligned_filelist, unaligned_filelist) #Necessary because bug in muscle '-stable' option (option disabled for this reason as of muscle version 3.8)
-						alignment_list = read_alignments(aligned_filelist)
-						if docontinue:
-							if not gblocks and args.degap == "all":
-								if verbose:
-									print "\n----------------------------------"
-									print "Removing all gapped positions from all single alignments prior to concatenation"
-								alignment_list = remove_gaps_from_complete_alignments(alignment_list)
-							elif not gblocks and args.degap == "flanking":
-								if verbose:
-									print "\n----------------------------------"
-									print "Removing only the flanking gapped positions from all single alignments prior to concatenation"
-								alignment_list = remove_gaps_from_alignment_borders(alignment_list)
-							elif not gblocks and verbose:
-								print "\nLeaving the single alignments as they are (Not removing any gapped or unconserved positions)"
-							if docontinue:
-								if verbose:
-									print "\n----------------------------------"
-									print "concatenating alignments"
-								concatenated_alignment = concatenate_alignments(alignment_list, headers)
-								if docontinue:
-									if verbose:
-										print "\n----------------------------------"
-										print "writing concatenated alignment to fasta-file: " + outputfilename
-									write_final_alignment(outputfilename, concatenated_alignment)
-									if gblocks:
-										print "running gblocks on " + outputfilename
-										call_Gblocks(outputfilename)
-										try:
-											final_check = read_alignments([outputfilename + "-gb"])
-											proc_aln_length = len(final_check[0][0])
-										except Exception as e:
-											datsANerror("ERROR: Something wrong with the gblocks output. Please check version and executable rights of gblocks")	
-											datsANerror(str(e))
-										if docontinue:
-											datsAlogmessage("-->Processed File: %s-gb\n-->Gblocks-Logfile: %s-gb.htm" %(outputfilename, outputfilename))
-											
-		if args.keep_temp != True:
-			print "\n----------------------------------"
-			print "cleaning up..."
-			try:
-				for delfile in unaligned_filelist:
-					os.remove(delfile)
-					if "clustalw" in args.alignmeth:
-						os.remove(delfile.rstrip(".fasta") + ".dnd") #remove pesky "guide-tree" files produced by clustal aligners as well	
-				for delfile in aligned_filelist:
-					os.remove(delfile)
-			except:
-				print "Nothing to delete, due to aborted run"
-		if docontinue:
-			if verbose:
-				print "=================================="
-			datsAlogmessage("FINISHED!\nthe individual (unaligned) ortholog selections were stored as the following multifastas: ")
-			datsAlogmessage(", ".join(seq_filelist))
-			datsAlogmessage("%d genes concatenated to a final sequence length of %d residues per organism" %(OG_number, aln_length))
-		if gblocks:
-			datsAlogmessage("after 'gblocks' the remaining sequence length is %s residues" % proc_aln_length)
-			datsAlogmessage("\n-->final aligned and processed sequence saved as: %s-gb" % outputfilename)
-		else:
-			datsAlogmessage("\n-->final aligned sequence saved as: %s" % outputfilename)
-			datsAlogmessage("\nRemember to set sequence-type as 'PROTEIN' and filetype as 'fasta_wgap' when loading the MLSA sequence into Arb!\n")
+def run_multiprocess_group(targetfunction, targetargs): #must start working with classes to avoid such long argument lists
+	if __name__ == '__main__': #just making sure function is only called within its intended context
+		maxlen = len(columns[0][1])
+		group_results = []
+		
+		mp_output = multiprocessing.Queue()
+		processes = [multiprocessing.Process(target=targetfunction, args=targetargs) for x in range(cpus)]
+		
+		for p in processes:
+			p.start()
 			
-		if args.tree_method != "none":
-			datsAlogmessage("\nWAIT, I wasn't finished after all!\nNow generating maximum likelihood trees from final output alignment")
+		for p in processes:
+			p.join()
+			
+		group_results = [mp_output.get() for p in processes]
+		return group_results
+		
+	else:
+		raise RuntimeError("FORBIDDEN TO CALL THIS (MULTIPROCESSING) FUNCTION FROM AN EXTERNAL MODULE\n-->ABORTING")
+
+def main():
+	aligned_filelist, unaligned_filelist = [], []
+	mylogger.debug("main()")
+	global args, docontinue
+	
+	
+	try:
+		checkargs()
+		##move this to checkargs()
+		mylogger.info("-keep temporary files: %s" % args.keep_temp)
+		if not args.keep_temp and verbose:
+			mylogger.info("-->will delete all temporary files")
+		mylogger.info("-using aligner '%s'" % args.alignmeth)
+		if gblocks in ["no", "n", "false", "f"]:
+			mylogger.info("-remove gaps: " + args.degap)
+		else:
+			mylogger.info("-remove gaps: <OVERRIDDEN>\n-->will use Gblocks (with standard settings) on final result files for removal of gapped positions and poorly conserved regions")
+		headers, MLSA_list, OG_number = read_PO_file(args.PO_file)
+		##move this to checkargs()
+		
+		#read input
+		record_dict = read_fasta_seqs(headers, MLSA_list)
+		seq_filelist = write_seq_files(record_dict, MLSA_list)
+		unaligned_filelist = write_temp_files(record_dict, MLSA_list, "unaligned_temp_fasta_OG")
+		
+		#alignments
+		aligned_filelist = make_alignments(unaligned_filelist)
+		if args.alignmeth == "muscle":
+			correct_for_muscle_bug(aligned_filelist, unaligned_filelist) #Necessary because bug in muscle '-stable' option (option disabled for this reason as of muscle version 3.8)
+		alignment_list = read_alignments(aligned_filelist)
+		
+		#concatenate and filter alignments
+		#custom filter (not recommended)
+		if not gblocks and args.degap == "all":
+			mylogger.info("\n%s\nRemoving all gapped positions from all single alignments prior to concatenation", hline)
+			alignment_list = remove_gaps_from_complete_alignments(alignment_list)
+		elif not gblocks and args.degap == "flanking":
+			mylogger.info("\n%s\nRemoving only the flanking gapped positions from all single alignments prior to concatenation" % hline)
+			alignment_list = remove_gaps_from_alignment_borders(alignment_list)
+		elif not gblocks and verbose:
+			mylogger.info("Leaving the single alignments as they are (Not removing any gapped or unconserved positions)")
+		mylogger.info("\n%s\nconcatenating alignments" % hline)
+		concatenated_alignment = concatenate_alignments(alignment_list, headers)
+		mylogger.info("\n%s\nwriting concatenated alignment to fasta-file: %s" %(hline, outputfilename))
+		write_final_alignment(outputfilename, concatenated_alignment)
+		#gblocks filter(highly recommended)
+		if gblocks:
+			mylogger.info("running gblocks on %s" % outputfilename)
+			call_Gblocks(outputfilename)
+			final_check = read_alignments([outputfilename + "-gb"])
+			proc_aln_length = len(final_check[0][0])
+			mylogger.info("-->Processed File: %s-gb\n-->Gblocks-Logfile: %s-gb.htm" %(outputfilename, outputfilename))
+		
+		#give summary
+		mylogger.info("=" * 50)
+		mylogger.info("Finished alignments!\nthe individual (unaligned) ortholog selections were stored as the following multifastas: ")
+		mylogger.info(", ".join(seq_filelist))
+		mylogger.info("\n%d genes concatenated to a final sequence length of %d residues per organism" %(OG_number, aln_length))
+		if gblocks:
+			mylogger.info("after 'gblocks' the remaining sequence length is %s residues" % proc_aln_length)
+			mylogger.info("\n-->final aligned and processed sequence saved as: %s-gb" % outputfilename)
+		else:
+			mylogger.info("\n-->final aligned sequence saved as: %s" % outputfilename)
+			mylogger.info("\nRemember to set sequence-type as 'PROTEIN' and filetype as 'fasta_wgap' when loading the MLSA sequence into Arb!\n")
+			
+		#RaxML
+		if args.tree_method != "none": #add NJ option
+			mylogger.info("\nNow generating maximum likelihood trees from final output alignment")
 			if args.seed_nr == 0:
 				args.seed_nr = randomnumber()
 			treefiles = []
 			outtreename = "%s.%s.TREE" %(outputfilename, args.tree_method)
 			treefiles.extend(eval(args.tree_method)(outputfilename))
 			if docontinue:
-				datsAlogmessage("the following trees were generated:")
-				datsAlogmessage("\t" + "\n\t".join(treefiles))
+				mylogger.info("the following trees were generated:")
+				mylogger.info("\t" + "\n\t".join(treefiles))
 			else:
-				datsAlogmessage("some kind of error occured during ML calculation")
-			datsAlogmessage("cleaning up again...")
-			for delfile in os.listdir("."):
-				if "delme_tempfile" in delfile:
-					os.remove(delfile)
-					
-	if len(wstrings) > 0 or len(estrings) > 0:
-		if len(wstrings) > 0:
-			print "\nThere were Warnings!"
-		if len(estrings) > 0:
-			print "\nThere were Errors!"
-	print "See %s for details\n" % logfilename
-	write_logfile(logfilename)
-	
+				mylogger.info("some kind of error occured during ML calculation")
+				
+	except Exception as e:
+		for frame in traceback.extract_tb(sys.exc_info()[2]):
+			fname,lineno,fn,text = frame
+			#print "Error in %s on line %d :> %text" % (fname, lineno, text)
+		mylogger.error("Error in %s, %s, on line %d :> %s" % (fname, fn, lineno, text))
+		mylogger.error(str(e))
+		
+	finally:
+		#move cleanups here!
+		if len(unaligned_filelist) > 0 and len(aligned_filelist) > 0 and not args.keep_temp:
+			mylogger.info("\n%s\ncleaning up temporary alignmentfiles" % hline)
+			for delfile in unaligned_filelist:
+				os.remove(delfile)
+				if "clustalw" in args.alignmeth:
+					os.remove(delfile.rstrip(".fasta") + ".dnd") #remove pesky "guide-tree" files produced by clustal aligners as well
+			for delfile in aligned_filelist:
+				os.remove(delfile)
+		mylogger.info("cleaning up RaxML tempfiles")
+		for delfile in os.listdir("."):
+			if "delme_tempfile" in delfile:
+				os.remove(delfile)
+
 if args.showversion:
 	print_version()
 else:
+	mylogger = setlogger(logfilename)
 	main()
