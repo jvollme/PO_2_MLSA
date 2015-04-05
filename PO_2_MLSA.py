@@ -12,13 +12,13 @@ myparser.add_argument("-po", "--proteinortho", action = "store", dest = "PO_file
 myparser.add_argument("-f", "--fastas", action = "store", dest = "fasta_path", help = "(String) path to fasta files (produced by CDS_extractor) \nDefault = current working directory", default = "")
 myparser.add_argument("-tp", "--temp_path", action = "store", dest = "temp_path", default = "", help = "Path for temporary files (will be created if does not exist)\nDefault =  current working directory")
 myparser.add_argument("-kt", "--keep_temp", action = "store_true", dest = "keep_temp", default = False, help = "Keep all temporary files and intermediate results\n(Multifasta_files containing the singe genes involved in the MLSA-alignments are stored in any case)\nDefault: delete all temporary files")
-myparser.add_argument("-am", "--alignmethod", action = "store", dest = "alignmeth", choices = ["muscle", "clustalw", "clustalw2", "clustalo"], default = "muscle", help = "The Alignmentmethod to use.\nDefault = 'muscle'")
+myparser.add_argument("-am", "--align_method", action = "store", dest = "alignmeth", choices = ["muscle", "clustalw", "clustalw2", "clustalo"], default = "muscle", help = "The Alignmentmethod to use.\nDefault = 'muscle'")
 myparser.add_argument("-ap", "--aligner_path", action = "store", dest = "aligner_path", default = "", help = "(OPTIONAL: set path to the aligner of choice IF not included in global PATH variable")
-myparser.add_argument("-dg", "--degap", action = "store", dest = "degap", choices = ["none", "all", "flanking"], default = "all", help = "(Only meant for use, if Gblocks is not installed\nSpecify if and which gaps to remove:\n\t'none' keep all gapped positions in the final MLSA-alignment\n\t'all' remove ALL gapped postitions in the alignments\n\t'flanking' remove flanking gapped positions from all individual alignments\nDefault = 'all'")
+#myparser.add_argument("-dg", "--degap", action = "store", dest = "degap", choices = ["none", "all", "flanking"], default = "all", help = "(Only meant for use, if Gblocks is not installed\nSpecify if and which gaps to remove:\n\t'none' keep all gapped positions in the final MLSA-alignment\n\t'all' remove ALL gapped postitions in the alignments\n\t'flanking' remove flanking gapped positions from all individual alignments\nDefault = 'all'")
+myparser.add_argument("-F", "--filter", action = "store", dest = "afilter", choices = ["none", "degap_all", "degap_flanking", "gblocks"], default = "gblocks", help = "Specify if and how alignments should be filtered:\n\t'none' do not filter alignments (keep all gapped positions)\n\t'degap_all' remove ALL gapped postitions in the alignments (use only if gblock is not available)\n\t'degap_flanking' remove flanking gapped positions from all individual alignments (use only if gblocks is not available)\n'gblocks' use gblocks with default settings to degap and filter alignments (Default)")
 myparser.add_argument("-s", "--silent", action = "store_true", dest = "no_verbose", help = "non-verbose mode")
-#todo: implement an own "mutlrithreading" for alignment-step (start nthreads alignment-processes simultaniously. wait for all processes to finish before carrying on)
 myparser.add_argument("-t", "--threads", action = "store", dest = "nthreads", type = int, default = 1, help = "Maximum number of threads to use for alignment steps\nDefault = 1")
-myparser.add_argument("-gb", "--gblocks", action = "store", dest = "gblocks", choices = ["n", "no", "f", "false", "y", "yes", "t", "true"], default = "true", help = "calls gblocks (if installed) to remove gapped positions and poorly aligned regions\n(Overrides '-dg'|'--degap'\nchoices:\n\t[n|no|f|false]: will NOT use Gblocks\n\t[y|yes|t|true]: WILL use Gblocks\nDefault = true (WILL use Gblocks)")
+#myparser.add_argument("-gb", "--gblocks", action = "store", dest = "gblocks", choices = ["n", "no", "f", "false", "y", "yes", "t", "true"], default = "true", help = "calls gblocks (if installed) to remove gapped positions and poorly aligned regions\n(Overrides '-dg'|'--degap'\nchoices:\n\t[n|no|f|false]: will NOT use Gblocks\n\t[y|yes|t|true]: WILL use Gblocks\nDefault = true (WILL use Gblocks)")
 myparser.add_argument("-gbp", "--gblocks_path", action = "store", dest = "gblocks_path", default = "", help = "(OPTIONAL: set path to Gblocks IF not included in global PATH variable)")
 myparser.add_argument("-op", "--out_path", action = "store", dest = "out_path", default = "", help = "Path to output (will be created if it does not exist)\nDefault = current working directory")
 myparser.add_argument("-mt", "--make_tree", action = "store", dest = "tree_method", choices = ["raxml", "raxml_bs", "raxml_rapidbs", "none"], default = "none", help = "Generate ML phylogenetic trees using RAxML with the substitution model \"PROTGAMMAAUTO\"\n\tchoices:\t\"raxml\": single tree without bootstraps (using new rapid hill climbing)\n\t\traxml_bs: thorough bootstrap analyses and search for best ML tree\n\t\traxml_rapidbs: rapid bootstrap analyses and search for best ML tree in one run\n\t\tnone\nDefault = none")
@@ -125,13 +125,13 @@ def checkargs():
 		clustalomega_cline = ClustalOmegaCommandline("clustalo", version = True)
 		clustalo_version = clustalomega_cline()[0].rstrip().split(".")
 		if int(clustalo_version[0]) < 1 or (int(clustalo_version[0]) == 1 and int(clustalo_version[1]) < 2) : #only accept versions 1.2 and newer
-			raise OSError("installed clustalo version is v%s ! Version 1.2 or higher is required!" % ".".join(clustalo_version))
+			raise OSError("found clustalo version is v%s ! Version 1.2 or higher is required!" % ".".join(clustalo_version))
 			
-	if gblocks and docontinue:
+	if gblocks
 		if gblocks_path == "":
 			test_gblocks = which("Gblocks")
 			if test_gblocks == None:
-				raise OSError("can't locate Gblocks in any path in PATH variable. please provide a Path to Gblocks using the '-gbp' agrument!")
+				raise OSError("can't locate Gblocks in any path in PATH variable. please provide a Path to Gblocks using the '-gbp' agrument, or choose a different filtering option ('-F')")
 			elif verbose:
 				print "Located Gblocks executable: %s" % test_gblocks
 		else:
@@ -304,7 +304,7 @@ def write_temp_files(record_dict, MLSA_list, prefix):
 		
 	return unaligned_filelist
 
-def make_alignments(unaligned_filelist): #must start working with classes to avoid such long argument lists
+def make_alignments(unaligned_filelist): 
 	mylogger.debug("run_multiprocess_alignment(%s, unaligned_filelist)" % args.alignmeth)
 	mylogger.info("\n%s\nAligning Orthologeous Groups (OGs) using %s and %d cpus" %(hline, args.alignmeth, args.nthreads))
 	full_thread_mp_groups = len(unaligned_filelist) // args.nthreads
@@ -333,7 +333,7 @@ def make_alignments(unaligned_filelist): #must start working with classes to avo
 #	print "\n".join(aligned_filelist)
 	return aligned_filelist
 
-def clustalw(inputfile, mp_output):#Todo: change number of threads
+def clustalw(inputfile, mp_output):
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_CLUSTALW_temp_fasta_", 1)
 		clustalw_cline = ClustalwCommandline(os.path.join(args.aligner_path, args.alignmeth), INFILE = inputfile, outfile = outputfile, type = "PROTEIN", align = True, quiet = True, OUTORDER = "INPUT")
 		try:
@@ -342,7 +342,7 @@ def clustalw(inputfile, mp_output):#Todo: change number of threads
 		except Exception:
 			raise RuntimeError("Your clustalw version is older than v2 (probably v1.83). You should use version 2 or newer (called clustalw2 on many systems)")
 
-def clustalw2(inputfile, mp_output):#Todo: change number of threads
+def clustalw2(inputfile, mp_output):
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_CLUSTALW2_temp_fasta_", 1)
 		clustalw_cline = ClustalwCommandline(os.path.join(args.aligner_path, args.alignmeth), INFILE = inputfile, outfile = outputfile, type = "PROTEIN", align = True, quiet = True, OUTORDER = "INPUT")
 		clustalw_cline()
@@ -354,7 +354,7 @@ def clustalo(inputfile, mp_output):#Todo: find out a way to check clustalo versi
 		clustalomega_cline()
 		mp_output.put(outputfile)
 
-def muscle(inputfile, mp_output):#changing the number of threads aparently not possible
+def muscle(inputfile, mp_output):
 		mylogger.debug("muscle(%s)" % inputfile)
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_MUSCLE_temp_fasta_", 1)
 		muscle_cline = MuscleCommandline(os.path.join(args.aligner_path, args.alignmeth), input = inputfile, out = outputfile, quiet = True) #add 'stable = True' to the end of this list, if the stable-bug in muscle is fixed (remove the correct_for_muscle_bug() method in that case)
@@ -402,7 +402,7 @@ def correct_for_muscle_bug(aligned_filelist, seq_filelist):
 		
 	return corrected
 
-def run_multiprocess_alignment(targetfunction, unaligned_files_portion): #must start working with classes to avoid such long argument lists
+def run_multiprocess_alignment(targetfunction, unaligned_files_portion):
 	mylogger.debug("run_multiprocess_alignment(%s, %s)" %(targetfunction, unaligned_files_portion))
 	if __name__ == '__main__': #just making sure function is only called within its intended context
 		group_results = []
@@ -682,10 +682,7 @@ def main():
 			infotext += " --> will delete all temporary files "
 		mylogger.info(infotext)
 		mylogger.info("-using aligner '%s'" % args.alignmeth)
-		if gblocks in ["no", "n", "false", "f"]:
-			mylogger.info("-remove gaps: " + args.degap)
-		else:
-			mylogger.info("-remove gaps: <OVERRIDDEN>\n-->will use Gblocks (with standard settings) on final result files for removal of gapped positions and poorly conserved regions")
+		mylogger.info("-alignment filter: " + args.afilter)
 		headers, MLSA_list, OG_number = read_PO_file(args.PO_file)
 		##move this to checkargs()
 		
@@ -702,10 +699,10 @@ def main():
 		
 		#concatenate and filter alignments
 		#custom filter (not recommended)
-		if not gblocks and args.degap == "all":
+		if args.afilter == "degap_all":
 			mylogger.info("\n%s\nRemoving all gapped positions from all single alignments prior to concatenation", hline)
 			alignment_list = remove_gaps_from_complete_alignments(alignment_list)
-		elif not gblocks and args.degap == "flanking":
+		elif args.afilter == "flanking":
 			mylogger.info("\n%s\nRemoving only the flanking gapped positions from all single alignments prior to concatenation" % hline)
 			alignment_list = remove_gaps_from_alignment_borders(alignment_list)
 		elif not gblocks and verbose:
