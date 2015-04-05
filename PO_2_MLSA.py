@@ -304,58 +304,6 @@ def write_temp_files(record_dict, MLSA_list, prefix):
 		
 	return unaligned_filelist
 
-def write_temp_alignments(alignmentlist, prefix):
-	mylogger.debug("write_temp_alignments(alignmentlist, %s)" % prefix)
-	proc_aligned_filelist = []
-	OG_counter = 0 #numbering of the used 'Orthologeous Groups'(OGs), to differentiate between the different temp_files
-
-	for index in range(len(alignmentlist)):
-		OG_counter += 1
-		alignfilename = os.path.join(args.temp_path, prefix + str(OG_counter).zfill(5) + ".fasta")
-		proc_aligned_filelist.append(alignfilename)
-		open_tempfile = open(alignfilename, 'w')
-		AlignIO.write([alignmentlist[index]], open_tempfile, "fasta")
-		open_tempfile.close()
-		
-	return proc_aligned_filelist
-
-#def make_alignments(unaligned_filelist):
-#	mylogger.debug("make_alignments(unaligned_filelist)")
-#	mylogger.info("\n%s\nAligning Orthologeous Groups (OGs)" % hline)
-#	aligned_filelist = []
-#	counter = 0
-#	
-#	for uf in unaligned_filelist:
-#		counter += 1
-#		if verbose:
-#			sys.stdout.write("\raligning OG %d from %d using %s" %(counter, len(unaligned_filelist), args.alignmeth))
-#			sys.stdout.flush()
-#		aligned_filelist.extend(eval(args.alignmeth)(uf))
-#		
-#	return aligned_filelist
-	
-def run_multiprocess_alignment(targetfunction, unaligned_files_portion): #must start working with classes to avoid such long argument lists
-	mylogger.debug("run_multiprocess_alignment(%s, %s)" %(targetfunction, unaligned_files_portion))
-	if __name__ == '__main__': #just making sure function is only called within its intended context
-		group_results = []
-		if len(unaligned_files_portion) > args.nthreads: #just an additional safety catch
-			raise RuntimeError("More alignment jobs sent to queue than specified cpus! there must be something wrong with this script!")
-			
-		mp_output = multiprocessing.Queue()
-		processes = [multiprocessing.Process(target=eval(targetfunction), args=(x, mp_output)) for x in unaligned_files_portion]
-		
-		for p in processes:
-			p.start()
-			
-		for p in processes:
-			p.join()
-			
-		group_results = [mp_output.get() for p in processes]
-		return group_results
-		
-	else:
-		raise RuntimeError("FORBIDDEN TO CALL THIS (MULTIPROCESSING) FUNCTION FROM AN EXTERNAL MODULE\n-->ABORTING")
-
 def make_alignments(unaligned_filelist): #must start working with classes to avoid such long argument lists
 	mylogger.debug("run_multiprocess_alignment(%s, unaligned_filelist)" % args.alignmeth)
 	mylogger.info("\n%s\nAligning Orthologeous Groups (OGs) using %s and %d cpus" %(hline, args.alignmeth, args.nthreads))
@@ -385,7 +333,6 @@ def make_alignments(unaligned_filelist): #must start working with classes to avo
 #	print "\n".join(aligned_filelist)
 	return aligned_filelist
 
-
 def clustalw(inputfile, mp_output):#Todo: change number of threads
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_CLUSTALW_temp_fasta_", 1)
 		clustalw_cline = ClustalwCommandline(os.path.join(args.aligner_path, args.alignmeth), INFILE = inputfile, outfile = outputfile, type = "PROTEIN", align = True, quiet = True, OUTORDER = "INPUT")
@@ -413,6 +360,84 @@ def muscle(inputfile, mp_output):#changing the number of threads aparently not p
 		muscle_cline = MuscleCommandline(os.path.join(args.aligner_path, args.alignmeth), input = inputfile, out = outputfile, quiet = True) #add 'stable = True' to the end of this list, if the stable-bug in muscle is fixed (remove the correct_for_muscle_bug() method in that case)
 		muscle_cline()
 		mp_output.put(outputfile)
+
+def correct_for_muscle_bug(aligned_filelist, seq_filelist):
+	#this def is a necessary workaround for the missing "stable" function of "muscle", which has been deactivated due to the discovery of a bug in this function
+	#without that function, the sequence order in the alignment might change, and that would be catastrophic for MLSA-analyses!
+	#This workaround method could become obsolete, when future muscle versions reimplement a correct '-stable' option (hopefully in version 3.9)
+	#In that case, add the option", stable = True" to the MuscleCommandline-call in 'call_muscle()'.
+	mylogger.debug("correct_for_muscle_bug(aligned_filelist, seq_filelist)")
+	mylogger.info("\n%s\ncorrecting sequence order in muscle alignments" % ("-" * 50))
+	
+	for f in range(len(aligned_filelist)):
+		sys.stdout.write("\rcorrecting alignmentfile %d of %d" %(f + 1, len(aligned_filelist)))
+		alignmentfile = aligned_filelist[f]
+		alignmenthandle = open(alignmentfile, 'r')
+		alignment = AlignIO.read(alignmenthandle, "fasta")
+		alignmenthandle.close()
+		seqs = []
+		seq_file = seq_filelist[f]
+		seq_handle = open(seq_file, 'r')
+		
+		for record in SeqIO.parse(seq_handle, "fasta"):
+			seqs.append(record)
+		seq_handle.close()
+		corrected = None
+		
+		for x in range(len(seqs)):
+			for y in range(len(alignment)):
+				#print str(x) + " " + seqs[x].id + " == " + alignment[y].id
+				if seqs[x].id == alignment[y].id:
+					#print "True"
+					if x == 0:
+						corrected = alignment[y:y + 1]
+					else:
+						corrected.append(alignment[y])
+				#else:
+				#	print "False"
+				
+		alignmenthandle = open(alignmentfile, 'w')
+		AlignIO.write([corrected], alignmenthandle, "fasta")
+		alignmenthandle.close()
+		
+	return corrected
+
+def run_multiprocess_alignment(targetfunction, unaligned_files_portion): #must start working with classes to avoid such long argument lists
+	mylogger.debug("run_multiprocess_alignment(%s, %s)" %(targetfunction, unaligned_files_portion))
+	if __name__ == '__main__': #just making sure function is only called within its intended context
+		group_results = []
+		if len(unaligned_files_portion) > args.nthreads: #just an additional safety catch
+			raise RuntimeError("More alignment jobs sent to queue than specified cpus! there must be something wrong with this script!")
+			
+		mp_output = multiprocessing.Queue()
+		processes = [multiprocessing.Process(target=eval(targetfunction), args=(x, mp_output)) for x in unaligned_files_portion]
+		
+		for p in processes:
+			p.start()
+			
+		for p in processes:
+			p.join()
+			
+		group_results = [mp_output.get() for p in processes]
+		return group_results
+		
+	else:
+		raise RuntimeError("FORBIDDEN TO CALL THIS (MULTIPROCESSING) FUNCTION FROM AN EXTERNAL MODULE\n-->ABORTING")
+
+def write_temp_alignments(alignmentlist, prefix):
+	mylogger.debug("write_temp_alignments(alignmentlist, %s)" % prefix)
+	proc_aligned_filelist = []
+	OG_counter = 0 #numbering of the used 'Orthologeous Groups'(OGs), to differentiate between the different temp_files
+
+	for index in range(len(alignmentlist)):
+		OG_counter += 1
+		alignfilename = os.path.join(args.temp_path, prefix + str(OG_counter).zfill(5) + ".fasta")
+		proc_aligned_filelist.append(alignfilename)
+		open_tempfile = open(alignfilename, 'w')
+		AlignIO.write([alignmentlist[index]], open_tempfile, "fasta")
+		open_tempfile.close()
+		
+	return proc_aligned_filelist
 
 def read_alignments(input_filelist):
 	mylogger.info("read_alignments(input_filelist)")
@@ -485,6 +510,52 @@ def remove_gaps_from_complete_alignments(alignmentlist): #optional. Better to us
 		
 	return processed_alignmentlist
 
+def rename_for_gblocks(align_file):
+	mylogger.debug("rename_for_gblocks(%s)" % align_file)
+	#temporarily rename sequences, so that gblocks doesn't freak out
+	mylogger.info("renaming sequences before gblocks")
+	alignment = read_alignments([align_file])[0]
+	index = 1
+	temp_name_dict = {}
+	tempfile_name = "%s_deltemp_indexed_alignments_%s" %(align_file, time.strftime("%Y%m%d%H%M%S"))
+	
+	for al in alignment:
+		mylogger.info("renaming %s to %d" %(al.id, index))
+		temp_name_dict[str(index)] = al.id
+		al.id = str(index)
+		al.description = ""
+		index += 1
+		
+	write_final_alignment(tempfile_name, alignment)
+	
+	return tempfile_name, temp_name_dict
+
+def call_Gblocks(file_name): #this calls Gblocks with standard settings. I tried not to overload the argument list for this python script
+	mylogger.debug("call_Gblocks(%s)" % file_name)
+	tempfile_name, temp_name_dict = rename_for_gblocks(file_name)
+	gblocks_args = ['-t=p', '-e=-gb', '-d=n']
+	
+	gblocks_command = [os.path.join(gblocks_path, "Gblocks"), tempfile_name] + gblocks_args
+	call(gblocks_command)
+	rename_after_gblocks(tempfile_name + "-gb", temp_name_dict, file_name + "-gb")
+	
+	os.remove(tempfile_name)
+	os.remove(tempfile_name + "-gb")
+
+	return file_name + "-gb"
+
+def rename_after_gblocks(align_file, temp_name_dict, final_filename):
+	mylogger.debug("rename_after_gblocks(%s, temp_name_dict, %s)" %(align_file, final_filename))
+	mylogger.info("renaming sequences back after gblocks")
+	alignment = read_alignments([align_file])[0]
+	
+	for al in alignment:
+		#print "renaming " + al.id + " to " + temp_name_dict[al.id]
+		al.id = temp_name_dict[al.id]
+		al.description = "gblocks-filtered concatenated coregenome"
+		
+	write_final_alignment(final_filename, alignment)
+
 def concatenate_alignments(alignment_list, headers):
 	mylogger.debug("concatenate_alignments(alignment_list, headers)")
 	global aln_length
@@ -522,100 +593,6 @@ def write_final_alignment(outputfilename, concatenated_alignment):
 	outputfile = open(outputfilename, 'w')
 	AlignIO.write(concatenated_alignment, outputfilename, "fasta")
 	outputfile.close()
-
-def correct_for_muscle_bug(aligned_filelist, seq_filelist):
-	#this def is a necessary workaround for the missing "stable" function of "muscle", which has been deactivated due to the discovery of a bug in this function
-	#without that function, the sequence order in the alignment might change, and that would be catastrophic for MLSA-analyses!
-	#This workaround method could become obsolete, when future muscle versions reimplement a correct '-stable' option (hopefully in version 3.9)
-	#In that case, add the option", stable = True" to the MuscleCommandline-call in 'call_muscle()'.
-	mylogger.debug("correct_for_muscle_bug(aligned_filelist, seq_filelist)")
-	mylogger.info("\n%s\ncorrecting sequence order in muscle alignments" % ("-" * 50))
-	
-	for f in range(len(aligned_filelist)):
-		sys.stdout.write("\rcorrecting alignmentfile %d of %d" %(f + 1, len(aligned_filelist)))
-		alignmentfile = aligned_filelist[f]
-		alignmenthandle = open(alignmentfile, 'r')
-		alignment = AlignIO.read(alignmenthandle, "fasta")
-		alignmenthandle.close()
-		seqs = []
-		seq_file = seq_filelist[f]
-		seq_handle = open(seq_file, 'r')
-		
-		for record in SeqIO.parse(seq_handle, "fasta"):
-			seqs.append(record)
-		seq_handle.close()
-		corrected = None
-		
-		for x in range(len(seqs)):
-			for y in range(len(alignment)):
-				#print str(x) + " " + seqs[x].id + " == " + alignment[y].id
-				if seqs[x].id == alignment[y].id:
-					#print "True"
-					if x == 0:
-						corrected = alignment[y:y + 1]
-					else:
-						corrected.append(alignment[y])
-				#else:
-				#	print "False"
-				
-		alignmenthandle = open(alignmentfile, 'w')
-		AlignIO.write([corrected], alignmenthandle, "fasta")
-		alignmenthandle.close()
-		
-	return corrected
-
-def rename_for_gblocks(align_file):
-	mylogger.debug("rename_for_gblocks(%s)" % align_file)
-	#temporarily rename sequences, so that gblocks doesn't freak out
-	mylogger.info("renaming sequences before gblocks")
-	alignment = read_alignments([align_file])[0]
-	index = 1
-	temp_name_dict = {}
-	tempfile_name = "%s_deltemp_indexed_alignments_%s" %(align_file, time.strftime("%Y%m%d%H%M%S"))
-	
-	for al in alignment:
-		mylogger.info("renaming %s to %d" %(al.id, index))
-		temp_name_dict[str(index)] = al.id
-		al.id = str(index)
-		al.description = ""
-		index += 1
-		
-	write_final_alignment(tempfile_name, alignment)
-	
-	return tempfile_name, temp_name_dict
-
-def rename_after_gblocks(align_file, temp_name_dict, final_filename):
-	mylogger.debug("rename_after_gblocks(%s, temp_name_dict, %s)" %(align_file, final_filename))
-	mylogger.info("renaming sequences back after gblocks")
-	alignment = read_alignments([align_file])[0]
-	
-	for al in alignment:
-		#print "renaming " + al.id + " to " + temp_name_dict[al.id]
-		al.id = temp_name_dict[al.id]
-		al.description = "gblocks-filtered concatenated coregenome"
-		
-	write_final_alignment(final_filename, alignment)
-
-def call_Gblocks(file_name): #this calls Gblocks with standard settings. I tried not to overload the argument list for this python script
-	mylogger.debug("call_Gblocks(%s)" % file_name)
-	tempfile_name, temp_name_dict = rename_for_gblocks(file_name)
-	gblocks_args = ['-t=p', '-e=-gb', '-d=n']
-	
-	gblocks_command = [os.path.join(gblocks_path, "Gblocks"), tempfile_name] + gblocks_args
-	call(gblocks_command)
-	rename_after_gblocks(tempfile_name + "-gb", temp_name_dict, file_name + "-gb")
-	
-	os.remove(tempfile_name)
-	os.remove(tempfile_name + "-gb")
-
-	return file_name + "-gb"
-
-def randomnumber():
-	mylogger.debug("randomnumber()")
-	#returns a random integer to use as seed for rxml and pyml
-	random.seed()
-	
-	return random.randint(1, 2000)
 
 def raxml_rapidbs(alignmentfile): #parameters should be a dictionary (This dictionary thing was introduced, so that the script can be more easily adapted to accept custom commandline-parameters for raxml by the user)
 	mylogger.debug("raxml_rapidbs(%s)" % alignmentfile)
@@ -679,6 +656,13 @@ def raxml(alignmentfile):
 			#print "deleting temp-file: " + delfile
 			os.remove(delfile)
 	return outputfiles
+
+def randomnumber():
+	mylogger.debug("randomnumber()")
+	#returns a random integer to use as seed for rxml and pyml
+	random.seed()
+	
+	return random.randint(1, 2000)
 
 def print_version():
 	print "\n ==PO_2_MLSA.py %s by John Vollmers==\n" % version
