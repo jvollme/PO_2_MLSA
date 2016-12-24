@@ -4,8 +4,12 @@ import os, sys, logging, argparse, time, multiprocessing, random, traceback
 from Bio.Align.Applications import ClustalwCommandline, MuscleCommandline, ClustalOmegaCommandline
 from Bio.Phylo.Applications import RaxmlCommandline
 from Bio import AlignIO, SeqIO
+from Bio import Phylo
 from Bio.Alphabet import IUPAC
 from subprocess import call
+from Bio.Phylo.Consensus import *
+from Bio.Phylo.TreeConstruction import DistanceCalculator
+from Bio.Phylo.TreeConstruction import DistanceTreeConstructor
 
 myparser=argparse.ArgumentParser(description="\n==PO_2_MLSA.py v1.3 by John Vollmers==\nCreates concatenated alignments of UNIQUE Genes with orthologues in comparison organisms for the construction of MLSA-based phylogenetic trees.\nOptionally the resulting concatenated alignments may contain all gapped alignmentpositions or may be stripped either of ALL gapped positions or of all gapped positions in the flanking regions of each composite ortholog\nThis script is supposed to be part of a pipeline consisting of:\n\tA.)Conversion of Genbank/Embl-Files to ANNOTATED(!) Fastas using CDS_extractor.pl by Andreas Leimbach\n\tB.)Calculation of orthologs and paralogs using proteinortho5 (WITH the '-single' and '-self' arguments!)\n\tC.)The creation of concatenated MLSA-sequences based on:\n\t\t-the fasta sequences of step A\n\t\t-the proteinortho5-results from step B\n\nThe output-file will be in fasta format (but including gapped positions, so remember to use 'fasta_wgap' when loading into Arb!). However it's absolutely no problem to include other common output-alignmentformats on request!", formatter_class=argparse.RawTextHelpFormatter)
 myparser.add_argument("-po", "--proteinortho", action = "store", dest = "PO_file", help = "(String) file with proteinortho5 results", required = True)
@@ -20,14 +24,23 @@ myparser.add_argument("-s", "--silent", action = "store_true", dest = "no_verbos
 myparser.add_argument("-t", "--threads", action = "store", dest = "nthreads", type = int, default = 1, help = "Maximum number of threads to use for alignment steps\nDefault = 1")
 #myparser.add_argument("-gb", "--gblocks", action = "store", dest = "gblocks", choices = ["n", "no", "f", "false", "y", "yes", "t", "true"], default = "true", help = "calls gblocks (if installed) to remove gapped positions and poorly aligned regions\n(Overrides '-dg'|'--degap'\nchoices:\n\t[n|no|f|false]: will NOT use Gblocks\n\t[y|yes|t|true]: WILL use Gblocks\nDefault = true (WILL use Gblocks)")
 myparser.add_argument("-gbp", "--gblocks_path", action = "store", dest = "gblocks_path", default = "", help = "(OPTIONAL: set path to Gblocks IF not included in global PATH variable)")
-myparser.add_argument("-op", "--out_path", action = "store", dest = "out_path", default = "", help = "Path to output (will be created if it does not exist)\nDefault = current working directory")
-myparser.add_argument("-mt", "--make_tree", action = "store", dest = "tree_method", choices = ["raxml", "raxml_bs", "raxml_rapidbs", "none"], default = "none", help = "Generate ML phylogenetic trees using RAxML with the substitution model \"PROTGAMMAAUTO\"\n\tchoices:\t\"raxml\": single tree without bootstraps (using new rapid hill climbing)\n\t\traxml_bs: thorough bootstrap analyses and search for best ML tree\n\t\traxml_rapidbs: rapid bootstrap analyses and search for best ML tree in one run\n\t\tnone\nDefault = none")
+myparser.add_argument("-op", "--out_path", action = "store", dest = "out_path", default = ".", help = "Path to output (will be created if it does not exist)\nDefault = current working directory")
+myparser.add_argument("-mt", "--make_tree", action = "store", dest = "tree_method", choices = ["raxml", "raxml_bs", "raxml_rapidbs", "nj", "nj_bs", "none"], default = "none", help = "Generate ML phylogenetic trees using RAxML with the substitution model \"PROTGAMMAAUTO\"\n\tchoices:\t\"raxml\": single tree without bootstraps (using new rapid hill climbing)\n\t\traxml_bs: thorough bootstrap analyses and search for best ML tree\n\t\traxml_rapidbs: rapid bootstrap analyses and search for best ML tree in one run\n\t\tnone\nDefault = none")
 myparser.add_argument("-tbp", "--tree_builder_path", action = "store", dest = "treebuilder_path", default = "", help = "Path to treebuilder (currently only raxml supported) if not listed in $PATH")
 myparser.add_argument("-sd", "--seed", action = "store", dest = "seed_nr", type = int, default = 0, help = "Integer to provide as seed for RAxML\n0 = seed generated randomly\nDefault = random seed")
 myparser.add_argument("-bs", "--bootstraps", action = "store", dest = "nr_bootstraps", type = int, default = 1000, help = "Number of bootstraps(if any)\ndefault = 1000")
 #myparser.add_argument("-ctba", "--custom_tree_builder_args", action = "store", dest = "custom_tree_builder_args", default = None, help = "custom arguments for raxml. CAUTION: will overide Only use if you know ExACTLY what you are doing!")
 myparser.add_argument("-v", "--version", action = "store_true", dest = "showversion", default = False, help = "show version information and then quit (don't run complete script)")
 myparser.add_argument("--debug", action = "store_true", dest = "debug", default = False, help = "Log extra info for debugging")
+myparser.add_argument("--nj_substmodel", action = "store", dest = "subst_model",\
+ choices = ['identity', 'blosum', 'pam','benner6', 'benner22', 'benner74', 'blosum100',\
+ 'blosum30', 'blosum35', 'blosum40', 'blosum45', 'blosum50', 'blosum55', 'blosum60',\
+ 'blosum62', 'blosum65', 'blosum70', 'blosum75', 'blosum80', 'blosum85', 'blosum90',\
+ 'blosum95', 'feng', 'fitch', 'genetic', 'gonnet', 'grant', 'ident', 'johnson', 'levin',\
+ 'mclach', 'miyata', 'nwsgappep', 'pam120', 'pam180', 'pam250', 'pam30', 'pam300',\
+ 'pam60', 'pam90', 'rao', 'risler', 'structure'],\
+  default = "ident", help = "Substitution model for distance matrix calculation. All models listed in Bio.Phylo.TreeConstruction.DistanceCalculator.protein_models are available. default settings:\n\t\"identity\"\n\t\"blosum\" = blosum62\n\t\"pam\" = pam120")
+#myparser.add_argument("--existing_align", action = "store", dest = existing_align, default = None, help = "contignue calculation from existing concatenated (and filtered!) alignment generated with PO_2_MLSA.py
 args = myparser.parse_args()
 
 #TOdo: add option "return_selection" to store selection of MLSA genes as unagligned multifastas or only lists of fasta-headers
@@ -36,23 +49,29 @@ version = "v1.3"
 available_cores = multiprocessing.cpu_count() #counts how many cores are available, to check if the user-argument for threads can be fulfilled
 aln_length, proc_aln_length, OG_number = 0, 0, 0
 wstrings, estrings, lstrings = [], [], [] #warning, error and log messages respectively
-#out_path, temp_path, fasta_path, PO_file = args.out_path, args.temp_path, args.fasta_path, args.po_resultfile
-#alignmeth, aligner_path, treebuilder_path = args.alignmeth, args.aligner_path, args.treebuilder_path
-#degap = args.degap
-#nthreads = args.nthreads
-#tree_method, bootstraps, seed = args.tree_method, args.nr_bootstraps, args.seed_nr
-#keep_temp = args.keep_temp
+
+if not os.path.exists(args.out_path):
+	os.makedirs(args.out_path)
 outputfilename = os.path.join(args.out_path, "concatenated_orthologs_%s_%s.fasta" %(args.alignmeth, os.path.basename(args.PO_file)))
 logfilename = os.path.join(args.out_path, "PO_2_MLSA_%s.log" % time.strftime("%Y%m%d%H%M%S"))
 raxml_prog = "raxmlHPC"
 verbose = True
 docontinue = True
 gblocks = True
-if args.gblocks in ["n", "no", "f", "false"]:
+if args.afilter != "gblocks":
 	gblocks = False
 gblocks_path = args.gblocks_path
 erroroccured, warningoccured = False, False
 hline = "-" * 50
+if args.subst_model in ["identity", "blosum", "pam"]:
+	if args.subst_model == "identity":
+		args.subst_model = "ident"
+	elif args.subst_model == "blosum":
+		args.subst_model = "blosum62"
+	elif args.subst_model == "pam":
+		args.subst_model = "pam120"
+
+
 
 def setlogger(logfilename): #shall replace datsanerror, datsanlogmessage  datswarning
 	#format logger
@@ -127,7 +146,7 @@ def checkargs():
 		if int(clustalo_version[0]) < 1 or (int(clustalo_version[0]) == 1 and int(clustalo_version[1]) < 2) : #only accept versions 1.2 and newer
 			raise OSError("found clustalo version is v%s ! Version 1.2 or higher is required!" % ".".join(clustalo_version))
 			
-	if gblocks
+	if gblocks:
 		if gblocks_path == "":
 			test_gblocks = which("Gblocks")
 			if test_gblocks == None:
@@ -233,7 +252,7 @@ def read_PO_file(filename):
 					for zt in range(len(zeilentokens)):
 						zeilentokens[zt] = zeilentokens[zt].rstrip()
 					if len(zeilentokens) != len(headers):
-						datsANerror("ERROR: Different numbers of columns in header_line and Locus_tag_lines in "+filename)
+						mylogger.error("ERROR: Different numbers of columns in header_line and Locus_tag_lines in "+filename)
 						break
 					for h in range(len(headers)):
 						MLSA_list[h][1].append(zeilentokens[h].rstrip())
@@ -259,10 +278,10 @@ def read_fasta_seqs(headers, MLSA_list):
 	for h in range(len(headers)):
 		mylogger.debug("reading file: %s" % headers[h])
 		if MLSA_list[h][0] != headers[h]:
-			datsANerror("ERROR: MLSA_list and headers are not synchronized! WTF!?!?!?!?")
+			mylogger.error("ERROR: MLSA_list and headers are not synchronized! WTF!?!?!?!?")
 			break
 		if not os.path.exists(os.path.join(args.fasta_path, headers[h])) or not (os.path.isfile(os.path.join(args.fasta_path, headers[h])) or os.path.islink(os.path.join(args.fasta_path, headers[h]))):
-			datsANerror("ERROR: Can't find fasta file: %s !\n\tPlease provide a path to a directory, that contains all fasta-files listed in %s" %(os.path.join(args.fasta_path, headers[h]), args.PO_file))
+			mylogger.error("ERROR: Can't find fasta file: %s !\n\tPlease provide a path to a directory, that contains all fasta-files listed in %s" %(os.path.join(args.fasta_path, headers[h]), args.PO_file))
 			return
 		open_fastafile = open(os.path.join(args.fasta_path, headers[h]), 'r')
 		temprecord_dict = dict.fromkeys(MLSA_list[h][1], None)
@@ -721,8 +740,9 @@ def main():
 		
 		#give summary
 		mylogger.info("=" * 50)
-		mylogger.info("Finished alignments!\nthe individual (unaligned) ortholog selections were stored as the following multifastas: ")
-		mylogger.info(", ".join(seq_filelist))
+#		mylogger.info("Finished alignments!\nthe individual (unaligned) ortholog selections were stored as the following multifastas: ")
+#		mylogger.info(", ".join(seq_filelist))
+		mylogger.info("Finished alignments!\nthe individual (unaligned) ortholog selections were stored under the following basename:\n\t%s " % os.path.join(args.out_path, "OGselection_MLSA_single_unaligned_multifasta_*"))
 		mylogger.info("\n%d genes concatenated to a final sequence length of %d residues per organism" %(OG_number, aln_length))
 		if gblocks:
 			mylogger.info("after 'gblocks' the remaining sequence length is %s residues" % proc_aln_length)
@@ -732,7 +752,7 @@ def main():
 			mylogger.info("\nRemember to set sequence-type as 'PROTEIN' and filetype as 'fasta_wgap' when loading the MLSA sequence into Arb!\n")
 			
 		#RaxML
-		if args.tree_method != "none": #add NJ option
+		if "raxml" in args.tree_method:
 			mylogger.info("\nNow generating maximum likelihood trees from final output alignment")
 			if args.seed_nr == 0:
 				args.seed_nr = randomnumber()
@@ -744,7 +764,19 @@ def main():
 				mylogger.info("\t" + "\n\t".join(treefiles))
 			else:
 				mylogger.info("some kind of error occured during ML calculation")
-				
+		elif "nj" in args.tree_method:
+			mylogger.info("\nNow generating neighbor-joining tree from final output alignment")
+			mylogger.debug("reading final alignment file: %s-gb" %outputfilename)
+			final_align = AlignIO.read(outputfilename + "-gb", "fasta") 
+			njtree = make_single_njtree(final_align)
+			if args.tree_method == "nj_bs" and args.nr_bootstraps > 1:
+				bs_list = run_multiprocess_bootstrap(final_align) #generate bootstrap trees using multiprocessing
+				final_tree = get_support(njtree, bs_list) #get support values from bootstrap trees
+			else:
+				final_tree = njtree
+			nj_filename = write_nj_tree(final_tree, outputfilename)
+			mylogger.info("wrote neighbor joining tree in newick format to %s" % nj_filename)
+			
 	except Exception as e:
 		for frame in traceback.extract_tb(sys.exc_info()[2]):
 			fname,lineno,fn,text = frame
@@ -766,6 +798,173 @@ def main():
 		for delfile in os.listdir("."):
 			if "delme_tempfile" in delfile:
 				os.remove(delfile)
+
+def make_single_njtree(protalign):
+	mylogger.debug("make_single_njtree(protalign)")
+	#subst_model can be ["identity", "BLOSUM", "PAM"] Default= "identity", "BLOSUM"= "BLOSUM62", "PAM"="PAM160"
+#	try:
+#		from Bio.Phylo.TreeConstruction import DistanceCalculator
+#		from Bio.Phylo.TreeConstruction import DistanceTreeConstructor
+#	except ImportError:
+#		mylogger.error("failed to import Bio.Phylo.TreeConstruction methods DistanceCalculator and DistanceTreeConstructor!\nPlease make sure you are using the newest version of BioPython")
+	mylogger.debug("DistanceCalculator(%s)" % args.subst_model)
+	distcalc = DistanceCalculator(args.subst_model)
+	mylogger.debug("DistanceTreeConstructor(distcalc, 'nj')")
+	tree_constructor = DistanceTreeConstructor(distcalc, 'nj')
+	mylogger.debug("tree_constructor.build_tree(protalign)")
+	tree = tree_constructor.build_tree(protalign)
+	mylogger.debug("finished with nj_tree")
+	return tree
+
+#todo: phylip method (perhaps faster?)
+#  convert alignment into phylip format (rename seqs first)
+#  write phylip alignment to file
+#  call emboss seqboot to create permutations (multiprocessing)
+#  call emboss protdist to create distance-matrices for all permutations
+#  call emboss fneighbor to create neighbor-joining trees for all distance_matrices
+#  also call emboss protdist and fneighbor on original alignment file to create main tree
+#  read in main_tree
+#  read in support-trees
+#  read in fuck
+#  read in all trees from fneighbor results and in frer bootstrap support
+
+def calculate_phylip_NJ_trees(temp_matrix_files):
+	mylogger.debug("calculate_phylip_NJ_trees(temp_matrix_files)")
+	if len(temp_matrix_files) == 0:
+		mylogger.warning("No Matrix files found in list!")
+	from Bio.Emboss.Applications import FNeighborCommandline
+	NJtrees = []
+	for mf in temp_matrix_files:
+		treefile = mf + ".tree"
+		cline = FNeighborCommandline(datafile = mf,\
+									outtreefile = treefile,\
+									jumble = True,\
+									outfile = "delfile_%s" % timetag) #set outfile = /dev/null to minimize unneccesary output
+		cline()
+		NJtrees.append(treefile)
+		if not args.no_verbose:
+			sys.stdout.write("\rGenerated tree %s of %s" %(len(NJtrees), len(temp_matrix_files)))
+			sys.stdout.flush()
+#	temp_files.append("delfile_%s" % timetag) #delete this line when setting outfile = /dev/null
+	mylogger.info("finished generating NJ trees using Phylip")
+	return NJtrees
+
+#def make_bootstrap_njtrees(protalign, nr_bootstraps, mp_output):
+#	mylogger.debug("make_bootstrap_njtrees(protalign, %s)" % nr_bootstraps)
+#	#subst_model can be ["identity", "BLOSUM", "PAM"] Default= "identity", "BLOSUM"= "BLOSUM62", "PAM"="PAM160"
+#	try:
+#		#bs_protalign = bootstrap(protalign, nr_bootstraps) 
+#		distcalc = DistanceCalculator(args.subst_model)
+#		tree_constructor = DistanceTreeConstructor(distcalc, 'nj')
+#		trees = bootstrap_trees(protalign, nr_bootstraps, tree_constructor)
+#		#return list(trees) #bootstrap_trees() returns a generator object that has to be converted
+#		mylogger.debug("another set of bootstrap trees successfully generated,hu")
+#		mp_output.put(list(trees))
+#	except:
+#		mylogger.error("Something went wrong during bootstrap tree generation")
+#		mp_output.put([None])
+		
+def make_bootstrap_njtrees(protalign, nr_bootstraps): #obsolete soon
+	mylogger.debug("make_bootstrap_njtrees(protalign, %s)" % nr_bootstraps)
+	#subst_model can be ["identity", "BLOSUM", "PAM"] Default= "identity", "BLOSUM"= "BLOSUM62", "PAM"="PAM160"
+	try:
+		#bs_protalign = bootstrap(protalign, nr_bootstraps) 
+		distcalc = DistanceCalculator(args.subst_model)
+		tree_constructor = DistanceTreeConstructor(distcalc, 'nj')
+		trees = bootstrap_trees(protalign, nr_bootstraps, tree_constructor)
+		#return list(trees) #bootstrap_trees() returns a generator object that has to be converted
+		mylogger.debug("another set of bootstrap trees successfully generated,hu")
+		treelist=[]
+		counter = 0
+		for t in trees:
+			counter += 1
+			print "appending bs-tree nr %s" % counter
+			treelist.append(t)
+		print "finished appending %s trees" % counter
+		return treelist
+	except:
+		mylogger.error("Something went wrong during bootstrap tree generation")
+		return [None]
+
+def get_bootstrap_support(maintree, bs_trees):
+	mylogger.debug("get_bootstrap_support(maintree, bs_trees)")
+#	try:
+#		from Bio import Phylo
+#		from Bio.Phylo.Consensus import get_support
+#	except ImportError:
+#		mylogger.Error("get_bootstrap_support() failed. Biopython modules \"Phylo\" and \"Phylo.consensus\"could not be imported\n\
+#		Is the newest version of BioPython installed?")
+#		raise ImportError
+	support_tree = get_support(maintree, bs_trees)
+	return support_tree
+
+def write_nj_tree(tree, outname):
+	mylogger.debug("write_nj_tree(%s)" % tree)
+	
+	from Bio import Phylo
+	outname += ".%s" %(args.tree_method)
+	if args.tree_method == "nj_bs":
+		outname += ".%s" % args.nr_bootstraps
+	outname += ".tree.newick"
+	mylogger.info("writing treefile to %s" % outname)
+	
+	out_file = open(outname, "w")
+	Phylo.write(tree, out_file, "newick")
+	out_file.close()
+	return outname
+
+def write_distmatrix(distmatrix):
+	mylogger.debug("write_distmatrix(distmatrix)")
+	#optional: write distance matrix to file
+	#figure out how to do that later
+	
+#def run_multiprocess_bootstrap(alignments):
+#	#lazily copied and adapted the other mulitiprocess function for this purpose instead of adapting one function to serve both purposes
+#	mylogger.debug("run_multiprocess_bootstrap(alignments)")
+#	if __name__ == '__main__': #just making sure function is only called within its intended context
+#		group_results = []
+#	#define portions for multiprocessing
+#		if args.nr_bootstraps % args.nthreads == 0:
+#			bs_portions = [ args.nr_bootstraps // args.nthreads for i in range(args.nthreads)]
+#		else:
+#			bs_portions = [ args.nr_bootstraps // (args.nthreads - 1) for i in range(args.nthreads - 1)]
+#			remainder = args.nr_bootstraps % (args.nthreads - 1)
+#			bs_portions.append(remainder)
+#
+#			if len(bs_portions) > args.nthreads: #just an additional safety catch
+#				raise RuntimeError("More alignment jobs sent to queue than specified cpus! there must be something wrong with this script!")
+#			
+#			#start bootstrapping
+#			mp_output = multiprocessing.Queue()
+#			processes = [multiprocessing.Process(target=make_bootstrap_njtrees, args=(alignments, x, mp_output)) for x in bs_portions]
+#			mylogger.debug("starting %s processes")
+#			for p in processes:
+#				p.start()
+#			mylogger.debug("all processes running")
+#			mylogger.debug("now beginning to join %s processes" % len(processes))
+#			print processes
+#			for p in processes:
+#				print p
+#				p.join()
+#				print "joined one!"
+#			mylogger.debug(" all processed joined")
+#			group_results = [mp_output.get() for p in processes]
+#			
+#			#now combine these results
+#			bootstrap_treelist = []
+#			for gr in group_results:
+#				bootstrap_treelist.append(gr)
+#			mylogger.debug("generated %s bootstrap trees in total" % len(bootstrap_treelist))
+#			return bootstrap_treelist
+#	else:
+#		raise RuntimeError("FORBIDDEN TO CALL THIS (MULTIPROCESSING) FUNCTION FROM AN EXTERNAL MODULE\n-->ABORTING")
+
+def run_multiprocess_bootstrap(alignments):
+	mylogger.debug("currently ignoring multiprocessing for bootstrap_generation!\nthis may take a while")
+	mylogger.debug("generating bootstraptrees")
+	bs_trees = make_bootstrap_njtrees(alignments, args.nr_bootstraps)
+	mylogger.debug("finished generating %s bootstraptrees" % len(bs_trees))
+	return bs_trees
 
 if args.showversion:
 	print_version()
