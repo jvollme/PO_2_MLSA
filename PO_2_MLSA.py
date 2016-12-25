@@ -219,6 +219,18 @@ def which(thisfile):
 			return path + "/" + thisfile
 	return None
 
+class comparison_org(object): #currently still unused stub for changing code to be object-roiented
+	def __init__(self, headerID, headerlist, og_table):
+		#get (pop) position of headerID in headerlist
+		#get (pop) corresponding columns from table (as list)
+
+class PO_results(object): #currently still unused stub
+	def __init__self
+		self.headerlist = headerlist
+		self.org_list = [] #fill with comparison_org objects
+		self.alignments = []
+		self.align_name_map = {}
+		
 def read_PO_file(filename):
 	mylogger.debug("read_PO_file(%s)" % filename)
 	open_PO_file = open(filename, 'r')
@@ -245,8 +257,8 @@ def read_PO_file(filename):
 			firstline = False
 			
 		elif not line.startswith("#"):
-			if not "," in line:
-				if not "*" in line:
+			if not "," in line: #ignore line if multiple orthologs for ANY comparison organism
+				if not "*" in line: #ignore line if ortholog is missing for ANY comparison organism
 					zeilentokens = line.split("\t")[org_index:]
 					#remove line end symbols:
 					for zt in range(len(zeilentokens)):
