@@ -221,8 +221,17 @@ def which(thisfile):
 
 class comparison_org(object): #currently still unused stub for changing code to be object-roiented
 	def __init__(self, headerID, headerlist, og_table):
-		#get (pop) position of headerID in headerlist
-		#get (pop) corresponding columns from table (as list)
+		assert len(headerlist) == len(og_table)
+		
+		self.tableindex = headerlist.index(headerID)
+		self.name = headerID
+		self.phylip_id = str(self.tableindex).zfill(3)
+		self.OGloci = []
+		for line in og_table:
+			self.OGloci.append(line[self.tableindex])
+		self.OGseqs_unaligned = []
+		self.OGseqs_alinged = []
+		self.OGseqs_alinged_filtered = []
 
 class PO_results(object): #currently still unused stub
 	def __init__self
@@ -230,7 +239,16 @@ class PO_results(object): #currently still unused stub
 		self.org_list = [] #fill with comparison_org objects
 		self.alignments = []
 		self.align_name_map = {}
-		
+
+def check_PO_format(line):
+			if line.startswith("#species"):
+				mylogger.warning("It seems you are using results from Proteinortho4. It's recommended to use Proteinortho5 or later!\n\t(However, the derivation of MLSA genes should still work)")
+			elif line.startswith("# Species"):
+				if verbose:
+					print "\nProteinortho-results seem to be based on Proteinortho5 or later. Good."
+			else:
+				mylogger.warning("Cannot clearly recognize Format of Proteinortho-results! This may produce erroneous results!\n\t For best results use Proteinortho5!")	
+	
 def read_PO_file(filename):
 	mylogger.debug("read_PO_file(%s)" % filename)
 	open_PO_file = open(filename, 'r')
@@ -242,13 +260,7 @@ def read_PO_file(filename):
 	
 	for line in open_PO_file:
 		if firstline:
-			if line.startswith("#species"):
-				mylogger.warning("It seems you are using results from Proteinortho4. It's recommended to use Proteinortho5 or later!\n\t(However, the derivation of MLSA genes should still work)")
-			elif line.startswith("# Species"):
-				if verbose:
-					print "\nProteinortho-results seem to be based on Proteinortho5 or later. Good."
-			else:
-				mylogger.warning("Cannot clearly recognize Format of Proteinortho-results! This may produce erroneous results!\n\t For best results use Proteinortho5!")
+			check_PO_format(line)
 			headers = line.split("\t")[org_index:]
 			#remove line_end_symbols:
 			for h in range(len(headers)):
