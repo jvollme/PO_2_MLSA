@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 #created 21.06.2014 by John Vollmers
 import os, sys, logging, argparse, time, multiprocessing, random, traceback
 from Bio.Align.Applications import ClustalwCommandline, MuscleCommandline, ClustalOmegaCommandline
@@ -11,7 +11,9 @@ from Bio.Phylo.Consensus import *
 from Bio.Phylo.TreeConstruction import DistanceCalculator
 from Bio.Phylo.TreeConstruction import DistanceTreeConstructor
 
-myparser=argparse.ArgumentParser(description="\n==PO_2_MLSA.py v1.3 by John Vollmers==\nCreates concatenated alignments of UNIQUE Genes with orthologues in comparison organisms for the construction of MLSA-based phylogenetic trees.\nOptionally the resulting concatenated alignments may contain all gapped alignmentpositions or may be stripped either of ALL gapped positions or of all gapped positions in the flanking regions of each composite ortholog\nThis script is supposed to be part of a pipeline consisting of:\n\tA.)Conversion of Genbank/Embl-Files to ANNOTATED(!) Fastas using CDS_extractor.pl by Andreas Leimbach\n\tB.)Calculation of orthologs and paralogs using proteinortho5 (WITH the '-single' and '-self' arguments!)\n\tC.)The creation of concatenated MLSA-sequences based on:\n\t\t-the fasta sequences of step A\n\t\t-the proteinortho5-results from step B\n\nThe output-file will be in fasta format (but including gapped positions, so remember to use 'fasta_wgap' when loading into Arb!). However it's absolutely no problem to include other common output-alignmentformats on request!", formatter_class=argparse.RawTextHelpFormatter)
+#TODO: add parameters for gblocks
+
+myparser=argparse.ArgumentParser(description="\n==PO_2_MLSA.py v1.4 by John Vollmers==\nCreates concatenated alignments of UNIQUE Genes with orthologues in comparison organisms for the construction of MLSA-based phylogenetic trees.\nOptionally the resulting concatenated alignments may contain all gapped alignmentpositions or may be stripped either of ALL gapped positions or of all gapped positions in the flanking regions of each composite ortholog\nThis script is supposed to be part of a pipeline consisting of:\n\tA.)Conversion of Genbank/Embl-Files to ANNOTATED(!) Fastas using CDS_extractor.pl by Andreas Leimbach\n\tB.)Calculation of orthologs and paralogs using proteinortho5 (WITH the '-single' and '-self' arguments!)\n\tC.)The creation of concatenated MLSA-sequences based on:\n\t\t-the fasta sequences of step A\n\t\t-the proteinortho5-results from step B\n\nThe output-file will be in fasta format (but including gapped positions, so remember to use 'fasta_wgap' when loading into Arb!). However it's absolutely no problem to include other common output-alignmentformats on request!", formatter_class=argparse.RawTextHelpFormatter)
 myparser.add_argument("-po", "--proteinortho", action = "store", dest = "PO_file", help = "(String) file with proteinortho5 results", required = True)
 myparser.add_argument("-f", "--fastas", action = "store", dest = "fasta_path", help = "(String) path to fasta files (produced by CDS_extractor) \nDefault = current working directory", default = "")
 myparser.add_argument("-tp", "--temp_path", action = "store", dest = "temp_path", default = "", help = "Path for temporary files (will be created if does not exist)\nDefault =  current working directory")
@@ -45,7 +47,7 @@ args = myparser.parse_args()
 
 #TOdo: add option "return_selection" to store selection of MLSA genes as unagligned multifastas or only lists of fasta-headers
 
-version = "v1.3"
+version = "v1.4"
 available_cores = multiprocessing.cpu_count() #counts how many cores are available, to check if the user-argument for threads can be fulfilled
 aln_length, proc_aln_length, OG_number = 0, 0, 0
 wstrings, estrings, lstrings = [], [], [] #warning, error and log messages respectively
@@ -219,27 +221,6 @@ def which(thisfile):
 			return path + "/" + thisfile
 	return None
 
-class comparison_org(object): #currently still unused stub for changing code to be object-roiented
-	def __init__(self, headerID, headerlist, og_table):
-		assert len(headerlist) == len(og_table)
-		
-		self.tableindex = headerlist.index(headerID)
-		self.name = headerID
-		self.phylip_id = str(self.tableindex).zfill(3)
-		self.OGloci = []
-		for line in og_table:
-			self.OGloci.append(line[self.tableindex])
-		self.OGseqs_unaligned = []
-		self.OGseqs_alinged = []
-		self.OGseqs_alinged_filtered = []
-
-class PO_results(object): #currently still unused stub
-	def __init__self
-		self.headerlist = headerlist
-		self.org_list = [] #fill with comparison_org objects
-		self.alignments = []
-		self.align_name_map = {}
-
 def check_PO_format(line):
 			if line.startswith("#species"):
 				mylogger.warning("It seems you are using results from Proteinortho4. It's recommended to use Proteinortho5 or later!\n\t(However, the derivation of MLSA genes should still work)")
@@ -374,6 +355,7 @@ def make_alignments(unaligned_filelist):
 #	print hline
 	aligned_filelist.sort() #filist gets all jumbled up by multiprocessing --> sort back into original order according to OG number!
 #	print "\n".join(aligned_filelist)
+	mylogger.debug("length of aligned_filelist: %s" %len(aligned_filelist)) 
 	return aligned_filelist
 
 def clustalw(inputfile, mp_output):
@@ -398,7 +380,7 @@ def clustalo(inputfile, mp_output):#Todo: find out a way to check clustalo versi
 		mp_output.put(outputfile)
 
 def muscle(inputfile, mp_output):
-		mylogger.debug("muscle(%s)" % inputfile)
+		#mylogger.debug("muscle(%s)" % inputfile)
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_MUSCLE_temp_fasta_", 1)
 		muscle_cline = MuscleCommandline(os.path.join(args.aligner_path, args.alignmeth), input = inputfile, out = outputfile, quiet = True) #add 'stable = True' to the end of this list, if the stable-bug in muscle is fixed (remove the correct_for_muscle_bug() method in that case)
 		muscle_cline()
@@ -411,13 +393,16 @@ def correct_for_muscle_bug(aligned_filelist, seq_filelist):
 	#In that case, add the option", stable = True" to the MuscleCommandline-call in 'call_muscle()'.
 	mylogger.debug("correct_for_muscle_bug(aligned_filelist, seq_filelist)")
 	mylogger.info("\n%s\ncorrecting sequence order in muscle alignments" % ("-" * 50))
+	mylogger.debug("alignmentfiles to read %s\n" %len(aligned_filelist))
+	mylogger.debug("seqeunce files to read %s\n" %len(aligned_filelist))
+	#sys.stdout.write(str(aligned_filelist))
 	
-	for f in range(len(aligned_filelist)):
-		sys.stdout.write("\rcorrecting alignmentfile %d of %d" %(f + 1, len(aligned_filelist)))
+	for f in range(len(aligned_filelist)): #I)open each alignmentfile, II) open corresponding unaligned seqeunce file III) iterate through seqeunce file and grab all aligned seqeunces in the exact order they are listed in the seqeunce file
 		alignmentfile = aligned_filelist[f]
 		alignmenthandle = open(alignmentfile, 'r')
 		alignment = AlignIO.read(alignmenthandle, "fasta")
 		alignmenthandle.close()
+		mylogger.debug("correcting alignmentfile %d of %d (%s) containg %d seqeunces" %(f + 1, len(aligned_filelist), aligned_filelist[f], len(alignment)))
 		seqs = []
 		seq_file = seq_filelist[f]
 		seq_handle = open(seq_file, 'r')
@@ -425,7 +410,7 @@ def correct_for_muscle_bug(aligned_filelist, seq_filelist):
 		for record in SeqIO.parse(seq_handle, "fasta"):
 			seqs.append(record)
 		seq_handle.close()
-		corrected = None
+		corrected = None# corrected will be a alignment-object (list-like) containing all comparison-organisms orthologs of ONE markergene (iterating through markergenes) in odentical order (of comparison-org)
 		
 		for x in range(len(seqs)):
 			for y in range(len(alignment)):
@@ -433,20 +418,21 @@ def correct_for_muscle_bug(aligned_filelist, seq_filelist):
 				if seqs[x].id == alignment[y].id:
 					#print "True"
 					if x == 0:
-						corrected = alignment[y:y + 1]
+						corrected = alignment[y:y + 1]# if it is the FIRST sequence --> create new alignment object from template using slice annotation
 					else:
-						corrected.append(alignment[y])
+						corrected.append(alignment[y])#otherwise just append to the existing alignment object using list-append function
 				#else:
 				#	print "False"
-				
+		mylogger.debug("after correction corrected file %d of %d (%s) has %d seqeunces" %(f + 1, len(aligned_filelist), aligned_filelist[f], len(corrected)))				
 		alignmenthandle = open(alignmentfile, 'w')
 		AlignIO.write([corrected], alignmenthandle, "fasta")
 		alignmenthandle.close()
-		
-	return corrected
+	sys.stdout.write("\ncorrecting alignmentfiles completed")
+	mylogger.info("corrected %s alignmentfiles" %f)  somehow the number of seqeunces has changed to 100 for the LAST alignment here?
+	#return corrected #NOT needed! calling function does not process this anyway
 
 def run_multiprocess_alignment(targetfunction, unaligned_files_portion):
-	mylogger.debug("run_multiprocess_alignment(%s, %s)" %(targetfunction, unaligned_files_portion))
+	#mylogger.debug("run_multiprocess_alignment(%s, %s)" %(targetfunction, unaligned_files_portion))
 	if __name__ == '__main__': #just making sure function is only called within its intended context
 		group_results = []
 		if len(unaligned_files_portion) > args.nthreads: #just an additional safety catch
@@ -573,6 +559,10 @@ def rename_for_gblocks(align_file):
 	
 	return tempfile_name, temp_name_dict
 
+#TODO CHANGE THE FUNXTION BELOW TO COMBINE GBOLCKS WITH OWN METHOD:
+#	-First remove gapped positions from FLANKING REGIONS of each individual markergene alignment (removing positions not covered by e.g. partial genes)
+#	-THEN concatenate all alignments
+#	-THEN call gblocks to remove bad alignment positions (CHANGE flanking cutoff to 50% and KEEP ALL GAPPED POSITIONS!)
 def call_Gblocks(file_name): #this calls Gblocks with standard settings. I tried not to overload the argument list for this python script
 	mylogger.debug("call_Gblocks(%s)" % file_name)
 	tempfile_name, temp_name_dict = rename_for_gblocks(file_name)
@@ -605,16 +595,16 @@ def concatenate_alignments(alignment_list, headers):
 	suffix_list = ["_cds_aa.fasta", ".fasta", ".fas", ".faa", ".fa"]#list of most probable input-sequence suffixes for removal from sequence identifier
 	counter = 0
 	maxnumber = len(alignment_list)
-	concatenated_alignment = alignment_list[0][:, 0:0]
+	concatenated_alignment = alignment_list[0][:, 0:0] #simply create an empty an empty alignment with pre-defined placeholders for every comparison-genome (numpy annotation, as alignment-objects are based on numpy)
 	
 	for alignment in alignment_list:
 		counter += 1
-		sys.stdout.write("\rconcatenating alignment %d of %d" %(counter, maxnumber))
-		sys.stdout.flush()
+		mylogger.debug("concatenating alignment %d of %d with %d comparison-markers" %(counter, maxnumber, len(alignment)))
 		concatenated_alignment += alignment
 	del alignment_list #not needed anymore --> free up memory
 	
 	if len(concatenated_alignment) == len(headers): #len(concatenated_alignment) counts the NUMBER of comparison sequences, not their length
+		mylogger.debug("GOOD: number_concat_seqs: %s == number headers: %s" %(len(concatenated_alignment),len(headers)))
 		for index in range(len(headers)): #renaming the concatenated sequences (otherwise they will just be named after the first ortholog)
 			newid = headers[index]
 			for suffix in suffix_list: #this removes the most probable suffixes from the sequence names in the final alignments
@@ -624,6 +614,13 @@ def concatenate_alignments(alignment_list, headers):
 			concatenated_alignment[index].id = newid
 			concatenated_alignment[index].description = "concatenated_unique_coregenome"
 	else:
+		mylogger.debug("number_concat_seqs: %s != number headers: %s" %(len(concatenated_alignment),len(headers)))
+		mylogger.debug("first header: %s" % headers[0])
+		mylogger.debug("last header: %s" % headers[-1])
+		mylogger.debug("first seq: %s " % concatenated_alignment[0])
+		mylogger.debug("last seq: %s \n" % concatenated_alignment[-1])
+		sys.stdout.write(str(concatenated_alignment))
+		sys.stdout.write("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
 		raise RuntimeError("Records in concatenated_alignment and headers are not synchronized!")
 		
 	if len(concatenated_alignment) != 0:
@@ -636,7 +633,11 @@ def write_final_alignment(outputfilename, concatenated_alignment):
 	outputfile = open(outputfilename, 'w')
 	AlignIO.write(concatenated_alignment, outputfilename, "fasta")
 	outputfile.close()
-
+#
+#IMPORTANT!!!
+#DOUBLE CHECK IF TREE-CAL_METHODS DO NOT STILL USE UNFILTERED ALIGNMENT(VEFORE GBLOCKS) !
+#IMPORTANT!!!
+#
 def raxml_rapidbs(alignmentfile): #parameters should be a dictionary (This dictionary thing was introduced, so that the script can be more easily adapted to accept custom commandline-parameters for raxml by the user)
 	mylogger.debug("raxml_rapidbs(%s)" % alignmentfile)
 	mylogger.info("Calculating phylogenies: 'rapid bootstrap analyses and search for best-scoring ML Tree in one run' using raxmlHPC and " + str(args.nthreads) + " threads")
@@ -736,10 +737,11 @@ def main():
 		
 		#alignments
 		aligned_filelist = make_alignments(unaligned_filelist)
+		mylogger.debug("MAIN: length of aligned_filelist = %s" % len(aligned_filelist))
 		if args.alignmeth == "muscle":
 			correct_for_muscle_bug(aligned_filelist, unaligned_filelist) #Necessary because bug in muscle '-stable' option (option disabled for this reason as of muscle version 3.8)
 		alignment_list = read_alignments(aligned_filelist)
-		
+		mylogger.debug("length alignment_list after reading corrected files back in : %s" %len(alignment_list))
 		#concatenate and filter alignments
 		#custom filter (not recommended)
 		if args.afilter == "degap_all":
