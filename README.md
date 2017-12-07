@@ -1,4 +1,4 @@
-##PO_2_MLSA.py v1.2
+## PO_2_MLSA.py v1.2
 Automizes the creation of concatenated alignments of __single copy__ genes with ___orthologues___ in comparison organisms for the construction of MLSA-based phylogenetic trees. Can optionally automize pylogenetic tree calculation using [RaXML][]
 
 Poorly aligned positions may be automatically filtered from the alignments using [Gblocks][] 

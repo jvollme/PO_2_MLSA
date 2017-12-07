@@ -13,7 +13,7 @@ from Bio.Phylo.TreeConstruction import DistanceTreeConstructor
 
 #TODO: add parameters for gblocks
 
-myparser=argparse.ArgumentParser(description="\n==PO_2_MLSA.py v1.4 by John Vollmers==\nCreates concatenated alignments of UNIQUE Genes with orthologues in comparison organisms for the construction of MLSA-based phylogenetic trees.\nOptionally the resulting concatenated alignments may contain all gapped alignmentpositions or may be stripped either of ALL gapped positions or of all gapped positions in the flanking regions of each composite ortholog\nThis script is supposed to be part of a pipeline consisting of:\n\tA.)Conversion of Genbank/Embl-Files to ANNOTATED(!) Fastas using CDS_extractor.pl by Andreas Leimbach\n\tB.)Calculation of orthologs and paralogs using proteinortho5 (WITH the '-single' and '-self' arguments!)\n\tC.)The creation of concatenated MLSA-sequences based on:\n\t\t-the fasta sequences of step A\n\t\t-the proteinortho5-results from step B\n\nThe output-file will be in fasta format (but including gapped positions, so remember to use 'fasta_wgap' when loading into Arb!). However it's absolutely no problem to include other common output-alignmentformats on request!", formatter_class=argparse.RawTextHelpFormatter)
+myparser=argparse.ArgumentParser(description="\n==PO_2_MLSA.py v1.5 by John Vollmers==\nCreates concatenated alignments of UNIQUE Genes with orthologues in comparison organisms for the construction of MLSA-based phylogenetic trees.\nOptionally the resulting concatenated alignments may contain all gapped alignmentpositions or may be stripped either of ALL gapped positions or of all gapped positions in the flanking regions of each composite ortholog\nThis script is supposed to be part of a pipeline consisting of:\n\tA.)Conversion of Genbank/Embl-Files to ANNOTATED(!) Fastas using CDS_extractor.pl by Andreas Leimbach\n\tB.)Calculation of orthologs and paralogs using proteinortho5 (WITH the '-single' and '-self' arguments!)\n\tC.)The creation of concatenated MLSA-sequences based on:\n\t\t-the fasta sequences of step A\n\t\t-the proteinortho5-results from step B\n\nThe output-file will be in fasta format (but including gapped positions, so remember to use 'fasta_wgap' when loading into Arb!). However it's absolutely no problem to include other common output-alignmentformats on request!", formatter_class=argparse.RawTextHelpFormatter)
 myparser.add_argument("-po", "--proteinortho", action = "store", dest = "PO_file", help = "(String) file with proteinortho5 results", required = True)
 myparser.add_argument("-f", "--fastas", action = "store", dest = "fasta_path", help = "(String) path to fasta files (produced by CDS_extractor) \nDefault = current working directory", default = "")
 myparser.add_argument("-tp", "--temp_path", action = "store", dest = "temp_path", default = "", help = "Path for temporary files (will be created if does not exist)\nDefault =  current working directory")
@@ -428,7 +428,7 @@ def correct_for_muscle_bug(aligned_filelist, seq_filelist):
 		AlignIO.write([corrected], alignmenthandle, "fasta")
 		alignmenthandle.close()
 	sys.stdout.write("\ncorrecting alignmentfiles completed")
-	mylogger.info("corrected %s alignmentfiles" %f)  somehow the number of seqeunces has changed to 100 for the LAST alignment here?
+	mylogger.info("corrected %s alignmentfiles" %f)  #PROBLEMS MAY OCCUR IF THE SAME LOCUS_TAG OCCURS TWICE
 	#return corrected #NOT needed! calling function does not process this anyway
 
 def run_multiprocess_alignment(targetfunction, unaligned_files_portion):
@@ -559,14 +559,16 @@ def rename_for_gblocks(align_file):
 	
 	return tempfile_name, temp_name_dict
 
-#TODO CHANGE THE FUNXTION BELOW TO COMBINE GBOLCKS WITH OWN METHOD:
-#	-First remove gapped positions from FLANKING REGIONS of each individual markergene alignment (removing positions not covered by e.g. partial genes)
-#	-THEN concatenate all alignments
-#	-THEN call gblocks to remove bad alignment positions (CHANGE flanking cutoff to 50% and KEEP ALL GAPPED POSITIONS!)
-def call_Gblocks(file_name): #this calls Gblocks with standard settings. I tried not to overload the argument list for this python script
+#CHANGED THE FUNXTION BELOW TO COMBINE GBOLCKS WITH OWN METHOD:
+#	-gapped positions have already been previously removed from FLANKING REGIONS of each individual markergene alignment (removing positions not covered by e.g. partial genes)
+#	-THEN all all alignments have been concatenated
+#	-THEN gblocks is called on this concatement here to remove bad alignment positions (BUT CHANGED flanking cutoff to 50% and KEEP ALL GAPPED POSITIONS!)
+def call_Gblocks(file_name, OG_number): #this calls Gblocks with standard settings. I tried not to overload the argument list for this python script
 	mylogger.debug("call_Gblocks(%s)" % file_name)
+	gb_cutoff_quotient = 0.5 #fraction (0-9) of residues having to be identical/cimilar to count as "conserved". !!CONSIDER CHANGING THIS TO 0.25 IF POSSIBLE!!
+	gb_cutoff_value = int(OG_number * gb_cutoff_quotient) + 1
 	tempfile_name, temp_name_dict = rename_for_gblocks(file_name)
-	gblocks_args = ['-t=p', '-e=-gb', '-d=n']
+	gblocks_args = ['-t=p', '-e=-gb', '-d=n', '-b2=%s' %gb_cutoff_value, '-b3=10', '-b4=5', '-b5=a']
 	
 	gblocks_command = [os.path.join(gblocks_path, "Gblocks"), tempfile_name] + gblocks_args
 	call(gblocks_command)
@@ -742,15 +744,10 @@ def main():
 			correct_for_muscle_bug(aligned_filelist, unaligned_filelist) #Necessary because bug in muscle '-stable' option (option disabled for this reason as of muscle version 3.8)
 		alignment_list = read_alignments(aligned_filelist)
 		mylogger.debug("length alignment_list after reading corrected files back in : %s" %len(alignment_list))
-		#concatenate and filter alignments
-		#custom filter (not recommended)
-		if args.afilter == "degap_all":
-			mylogger.info("\n%s\nRemoving all gapped positions from all single alignments prior to concatenation", hline)
-			alignment_list = remove_gaps_from_complete_alignments(alignment_list)
-		elif args.afilter == "flanking":
-			mylogger.info("\n%s\nRemoving only the flanking gapped positions from all single alignments prior to concatenation" % hline)
-			alignment_list = remove_gaps_from_alignment_borders(alignment_list)
-		elif not gblocks and verbose:
+		#Now removing all flanking gapped positions of all single alignments prior to concatenating and gblocks
+		mylogger.info("\n%s\nRemoving only the flanking gapped positions from all single alignments prior to concatenation" % hline)
+		alignment_list = remove_gaps_from_alignment_borders(alignment_list)
+		if not gblocks and verbose:
 			mylogger.info("Leaving the single alignments as they are (Not removing any gapped or unconserved positions)")
 		mylogger.info("\n%s\nconcatenating alignments" % hline)
 		concatenated_alignment = concatenate_alignments(alignment_list, headers)
@@ -758,8 +755,9 @@ def main():
 		write_final_alignment(outputfilename, concatenated_alignment)
 		#gblocks filter(highly recommended)
 		if gblocks:
+			
 			mylogger.info("running gblocks on %s" % outputfilename)
-			call_Gblocks(outputfilename)
+			call_Gblocks(outputfilename, OG_number)
 			final_check = read_alignments([outputfilename + "-gb"])
 			proc_aln_length = len(final_check[0][0])
 			mylogger.info("-->Processed File: %s-gb\n-->Gblocks-Logfile: %s-gb.htm" %(outputfilename, outputfilename))
@@ -783,8 +781,8 @@ def main():
 			if args.seed_nr == 0:
 				args.seed_nr = randomnumber()
 			treefiles = []
-			outtreename = "%s.%s.TREE" %(outputfilename, args.tree_method)
-			treefiles.extend(eval(args.tree_method)(outputfilename))
+			outtreename = "%s.%s.TREE" %(outputfilename + "-gb", args.tree_method)
+			treefiles.extend(eval(args.tree_method)(outputfilename + "-gb")) #corrected this to use gblocks-edited version
 			if docontinue:
 				mylogger.info("the following trees were generated:")
 				mylogger.info("\t" + "\n\t".join(treefiles))
