@@ -568,7 +568,7 @@ def call_Gblocks(file_name, OG_number): #this calls Gblocks with standard settin
 	gb_cutoff_quotient = 0.5 #fraction (0-9) of residues having to be identical/cimilar to count as "conserved". !!CONSIDER CHANGING THIS TO 0.25 IF POSSIBLE!!
 	gb_cutoff_value = int(OG_number * gb_cutoff_quotient) + 1
 	tempfile_name, temp_name_dict = rename_for_gblocks(file_name)
-	gblocks_args = ['-t=p', '-e=-gb', '-d=n', '-b2=%s' %gb_cutoff_value, '-b3=10', '-b4=5', '-b5=a']
+	gblocks_args = ['-t=p', '-e=-gb', '-d=n', '-b2=%s' %gb_cutoff_value, '-b3=8', '-b4=10', '-b5=a']
 	
 	gblocks_command = [os.path.join(gblocks_path, "Gblocks"), tempfile_name] + gblocks_args
 	call(gblocks_command)
