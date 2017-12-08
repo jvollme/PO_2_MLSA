@@ -509,9 +509,11 @@ def remove_gaps_from_alignment_borders(alignmentlist): #optional. Better to use 
 	#print "keep_temp: " + str(args.keep_temp)
 	if args.keep_temp == True:
 		#print "keep_temp is 'True' --> will produce prossessed single alignment files"
-		write_temp_alignments(processed_alignmentlist, "Processed_removedFLANKINGgaps_SINGLEalignment_MUSCLE_temp_fasta_OG")
+		processed_alignmentfiles = write_temp_alignments(processed_alignmentlist, "Processed_removedFLANKINGgaps_SINGLEalignment_MUSCLE_temp_fasta_OG")
 		
-	return processed_alignmentlist
+	#return processed_alignmentlist
+	return processed_alignmentfiles
+	
 
 def remove_gaps_from_complete_alignments(alignmentlist): #optional. Better to use Gblocks if available
 	mylogger.debug("remove_gaps_from_complete_alignments(alignmentlist)")
@@ -533,12 +535,23 @@ def remove_gaps_from_complete_alignments(alignmentlist): #optional. Better to us
 		processed_alignmentlist.append(processed_alignment)
 	#print "keep_temp: " + str(args.keep_temp)
 	
-	if args.keep_temp == True:
+	#if args.keep_temp == True:
 		#print "keep_temp is 'True' --> will produce prossessed single alignment files"
-		write_temp_alignments(processed_alignmentlist, "Processed_removedALLgaps_SINGLEalignment_MUSCLE_temp_fasta_OG")
-		
+	#	write_temp_alignments(processed_alignmentlist, "Processed_removedALLgaps_SINGLEalignment_MUSCLE_temp_fasta_OG")
+	write_temp_alignments(processed_alignmentlist, "Processed_removedALLgaps_SINGLEalignment_MUSCLE_temp_fasta_OG")
 	return processed_alignmentlist
 
+
+def rungblocks_on_single_alignments(alignmentlist, OG_number):
+	mylogger.debug("rungblocks_on_single_alignments(alignmentlist)")
+	gblocked_filelist = []
+	for afile in alignmentlist:
+		mylogger.info("\tGblocking {}".format(afile))
+		gblocked_filelist.append(call_Gblocks(afile, OG_number))
+		mylogger.info("\tGblocked file: {}".format(gblocked_filelist[-1]))
+	return gblocked_filelist
+		
+		
 def rename_for_gblocks(align_file):
 	mylogger.debug("rename_for_gblocks(%s)" % align_file)
 	#temporarily rename sequences, so that gblocks doesn't freak out
@@ -547,7 +560,6 @@ def rename_for_gblocks(align_file):
 	index = 1
 	temp_name_dict = {}
 	tempfile_name = "%s_deltemp_indexed_alignments_%s" %(align_file, time.strftime("%Y%m%d%H%M%S"))
-	
 	for al in alignment:
 		mylogger.info("renaming %s to %d" %(al.id, index))
 		temp_name_dict[str(index)] = al.id
@@ -703,6 +715,17 @@ def raxml(alignmentfile):
 			os.remove(delfile)
 	return outputfiles
 
+def fasttree(alignmentfile):
+	mylogger.debug("fasttree(%s)" % alignmentfile)
+	outfile = alignmentfile + "_fastree.newick"
+	fasttree_command = ["FastTree", "-lg", "-gamma", alignmentfile]
+	mylogger.debug("\t{}>{}".format(" ".join(fasttree_command), outfile))
+	with open(outfile, "w") as f:
+		exitstat = call(fasttree_command, stdout=f)
+	mylogger.info(" created {}".format(outfile))
+	if exitstat == 1:
+		raise Exception("an error occured during fasttree. Maybe you have duplicate identifiers?")
+	
 def randomnumber():
 	mylogger.debug("randomnumber()")
 	#returns a random integer to use as seed for rxml and pyml
@@ -747,20 +770,26 @@ def main():
 		#Now removing all flanking gapped positions of all single alignments prior to concatenating and gblocks
 		mylogger.info("\n%s\nRemoving only the flanking gapped positions from all single alignments prior to concatenation" % hline)
 		alignment_list = remove_gaps_from_alignment_borders(alignment_list)
-		if not gblocks and verbose:
-			mylogger.info("Leaving the single alignments as they are (Not removing any gapped or unconserved positions)")
+		gblocked_alignment_list = rungblocks_on_single_alignments(alignment_list, OG_number)
+		for a in gblocked_alignment_list:
+			fasttree(a)
+		raise Exception("I want to stop NOW")
+		
+		#if not gblocks and verbose:
+		#	mylogger.info("Leaving the single alignments as they are (Not removing any gapped or unconserved positions)")
 		mylogger.info("\n%s\nconcatenating alignments" % hline)
+		
 		concatenated_alignment = concatenate_alignments(alignment_list, headers)
 		mylogger.info("\n%s\nwriting concatenated alignment to fasta-file: %s" %(hline, outputfilename))
 		write_final_alignment(outputfilename, concatenated_alignment)
 		#gblocks filter(highly recommended)
-		if gblocks:
-			
-			mylogger.info("running gblocks on %s" % outputfilename)
-			call_Gblocks(outputfilename, OG_number)
-			final_check = read_alignments([outputfilename + "-gb"])
-			proc_aln_length = len(final_check[0][0])
-			mylogger.info("-->Processed File: %s-gb\n-->Gblocks-Logfile: %s-gb.htm" %(outputfilename, outputfilename))
+		#if gblocks:
+		#	
+		#	mylogger.info("running gblocks on %s" % outputfilename)
+		#	call_Gblocks(outputfilename, OG_number)
+		#	final_check = read_alignments([outputfilename + "-gb"])
+		#	proc_aln_length = len(final_check[0][0])
+		#	mylogger.info("-->Processed File: %s-gb\n-->Gblocks-Logfile: %s-gb.htm" %(outputfilename, outputfilename))
 		
 		#give summary
 		mylogger.info("=" * 50)
