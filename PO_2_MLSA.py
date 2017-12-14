@@ -542,16 +542,30 @@ def remove_gaps_from_complete_alignments(alignmentlist): #optional. Better to us
 	return processed_alignmentlist
 
 
-def rungblocks_on_single_alignments(alignmentlist, OG_number):
+def rungblocks_on_single_alignments(alignmentlist, OG_number, headers):
 	mylogger.debug("rungblocks_on_single_alignments(alignmentlist)")
 	gblocked_filelist = []
 	for afile in alignmentlist:
+		renamesingleseqs(afile, headers)
 		mylogger.info("\tGblocking {}".format(afile))
 		gblocked_filelist.append(call_Gblocks(afile, OG_number))
 		mylogger.info("\tGblocked file: {}".format(gblocked_filelist[-1]))
 	return gblocked_filelist
-		
-		
+
+def renamesingleseqs(afile, headers):
+	mylogger.info("renaming seqeunces in {}".format(afile))
+	suffix_list = ["_cds_aa.fasta", ".fasta", ".fas", ".faa", ".fa"]#list of most probable input-sequence suffixes for removal from sequence identifier
+	alignment = read_alignments([afile])[0]
+	for index in range(len(headers)):
+		newid = headers[index]
+		for suffix in suffix_list: #this removes the most probable suffixes from the sequence names in the final alignments
+				if headers[index].endswith(suffix):
+					newid = headers[index].rstrip(suffix)
+					break
+		alignment[index].id = newid
+		alignment[index].description = ""
+	write_final_alignment(afile, alignment)
+
 def rename_for_gblocks(align_file):
 	mylogger.debug("rename_for_gblocks(%s)" % align_file)
 	#temporarily rename sequences, so that gblocks doesn't freak out
@@ -770,7 +784,7 @@ def main():
 		#Now removing all flanking gapped positions of all single alignments prior to concatenating and gblocks
 		mylogger.info("\n%s\nRemoving only the flanking gapped positions from all single alignments prior to concatenation" % hline)
 		alignment_list = remove_gaps_from_alignment_borders(alignment_list)
-		gblocked_alignment_list = rungblocks_on_single_alignments(alignment_list, OG_number)
+		gblocked_alignment_list = rungblocks_on_single_alignments(alignment_list, OG_number, headers)
 		for a in gblocked_alignment_list:
 			fasttree(a)
 		raise Exception("I want to stop NOW")
