@@ -22,12 +22,12 @@ myparser.add_argument("-tp", "--temp_path", action = "store", dest = "temp_path"
 myparser.add_argument("-kt", "--keep_temp", action = "store_true", dest = "keep_temp", default = False, help = "Keep all temporary files and intermediate results\n(Multifasta_files containing the singe genes involved in the MLSA-alignments are stored in any case)\nDefault: delete all temporary files")
 myparser.add_argument("-am", "--align_method", action = "store", dest = "alignmeth", choices = ["muscle", "clustalw", "clustalw2", "clustalo"], default = "muscle", help = "The Alignmentmethod to use.\nDefault = 'muscle'")
 myparser.add_argument("-ap", "--aligner_path", action = "store", dest = "aligner_path", default = "", help = "(OPTIONAL: set path to the aligner of choice IF not included in global PATH variable")
-#myparser.add_argument("-dg", "--degap", action = "store", dest = "degap", choices = ["none", "all", "flanking"], default = "all", help = "(Only meant for use, if Gblocks is not installed\nSpecify if and which gaps to remove:\n\t'none' keep all gapped positions in the final MLSA-alignment\n\t'all' remove ALL gapped postitions in the alignments\n\t'flanking' remove flanking gapped positions from all individual alignments\nDefault = 'all'")
+#myparser.add_argument("-dg", "--degap", action = "store", dest = "degap", choices = ["none", "all", "flanking"], default = "all", help = "(Only meant for use, if gblocks is not installed\nSpecify if and which gaps to remove:\n\t'none' keep all gapped positions in the final MLSA-alignment\n\t'all' remove ALL gapped postitions in the alignments\n\t'flanking' remove flanking gapped positions from all individual alignments\nDefault = 'all'")
 #myparser.add_argument("-F", "--filter", action = "store", dest = "afilter", choices = ["none", "degap_all", "degap_flanking", "gblocks"], default = "gblocks", help = "Specify if and how alignments should be filtered:\n\t'none' do not filter alignments (keep all gapped positions)\n\t'degap_all' remove ALL gapped postitions in the alignments (use only if gblock is not available)\n\t'degap_flanking' remove flanking gapped positions from all individual alignments (use only if gblocks is not available)\n'gblocks' use gblocks with default settings to degap and filter alignments (Default)")
 myparser.add_argument("-s", "--silent", action = "store_true", dest = "no_verbose", help = "non-verbose mode")
 myparser.add_argument("-t", "--threads", action = "store", dest = "nthreads", type = int, default = 1, help = "Maximum number of threads to use for alignment steps\nDefault = 1")
-#myparser.add_argument("-gb", "--gblocks", action = "store", dest = "gblocks", choices = ["n", "no", "f", "false", "y", "yes", "t", "true"], default = "true", help = "calls gblocks (if installed) to remove gapped positions and poorly aligned regions\n(Overrides '-dg'|'--degap'\nchoices:\n\t[n|no|f|false]: will NOT use Gblocks\n\t[y|yes|t|true]: WILL use Gblocks\nDefault = true (WILL use Gblocks)")
-myparser.add_argument("-gbp", "--gblocks_path", action = "store", dest = "gblocks_path", default = "", help = "(OPTIONAL: set path to Gblocks IF not included in global PATH variable)")
+#myparser.add_argument("-gb", "--gblocks", action = "store", dest = "gblocks", choices = ["n", "no", "f", "false", "y", "yes", "t", "true"], default = "true", help = "calls gblocks (if installed) to remove gapped positions and poorly aligned regions\n(Overrides '-dg'|'--degap'\nchoices:\n\t[n|no|f|false]: will NOT use gblocks\n\t[y|yes|t|true]: WILL use gblocks\nDefault = true (WILL use gblocks)")
+myparser.add_argument("-gbp", "--gblocks_path", action = "store", dest = "gblocks_path", default = "", help = "(OPTIONAL: set path to gblocks IF not included in global PATH variable)")
 myparser.add_argument("-op", "--out_path", action = "store", dest = "out_path", default = ".", help = "Path to output (will be created if it does not exist)\nDefault = current working directory")
 myparser.add_argument("-mt", "--make_tree", action = "store", dest = "tree_method", choices = ["raxml", "raxml_bs", "raxml_rapidbs", "nj", "nj_bs", "none"], default = "none", help = "Generate ML phylogenetic trees using RAxML with the substitution model \"PROTGAMMAAUTO\"\n\tchoices:\t\"raxml\": single tree without bootstraps (using new rapid hill climbing)\n\t\traxml_bs: thorough bootstrap analyses and search for best ML tree\n\t\traxml_rapidbs: rapid bootstrap analyses and search for best ML tree in one run\n\t\tnone\nDefault = none")
 myparser.add_argument("-tbp", "--tree_builder_path", action = "store", dest = "treebuilder_path", default = "", help = "Path to treebuilder (currently only raxml supported) if not listed in $PATH")
@@ -151,21 +151,21 @@ def checkargs():
 			raise OSError("found clustalo version is v%s ! Version 1.2 or higher is required!" % ".".join(clustalo_version))
 			
 	if gblocks_path == "":
-		test_gblocks = which("Gblocks")
+		test_gblocks = which("gblocks")
 		if test_gblocks == None:
-			raise OSError("can't locate Gblocks in any path in PATH variable. please provide a Path to Gblocks using the '-gbp' agrument, or choose a different filtering option ('-F')")
+			raise OSError("can't locate gblocks in any path in PATH variable. please provide a Path to gblocks using the '-gbp' agrument, or choose a different filtering option ('-F')")
 		elif verbose:
-			print "Located Gblocks executable: %s" % test_gblocks
+			print "Located gblocks executable: %s" % test_gblocks
 	else:
 		if os.path.exists(gblocks_path) and os.path.isdir(gblocks_path):
-			if os.path.exists(os.path.join(gblocks_path, "Gblocks")) and os.path.isfile(os.path.join(gblocks_path, "Gblocks")):
+			if os.path.exists(os.path.join(gblocks_path, "gblocks")) and os.path.isfile(os.path.join(gblocks_path, "gblocks")):
 				if verbose:
-					print "Located Gblocks executable: %s" % os.path.join(gblocks_path, "Gblocks")
-		elif gblocks_path.endswith("Gblocks") and os.path.isfile(gblocks_path):
+					print "Located gblocks executable: %s" % os.path.join(gblocks_path, "gblocks")
+		elif gblocks_path.endswith("gblocks") and os.path.isfile(gblocks_path):
 			if verbose:
-				print "Located Gblocks executable: %s" % gblocks_path
+				print "Located gblocks executable: %s" % gblocks_path
 		else:
-			raise OSError("Gblocks executable could not be found in the specified path: %s" % gblocks_path)
+			raise OSError("gblocks executable could not be found in the specified path: %s" % gblocks_path)
 			
 	if args.tree_method != "none":
 		#print "CHECKING raxml-binaries"
@@ -488,7 +488,7 @@ def read_alignments(input_filelist):
 		
 	return alignmentlist
 
-def remove_gaps_from_alignment_borders(alignmentlist): #optional. Better to use Gblocks if available
+def remove_gaps_from_alignment_borders(alignmentlist): #optional. Better to use gblocks if available
 	mylogger.debug("remove_gaps_from_alignment_borders(alignmentlist)")
 	global outputfilename
 	global proc_aln_length
@@ -516,7 +516,7 @@ def remove_gaps_from_alignment_borders(alignmentlist): #optional. Better to use 
 	return processed_alignmentfiles
 	
 
-def remove_gaps_from_complete_alignments(alignmentlist): #optional. Better to use Gblocks if available
+def remove_gaps_from_complete_alignments(alignmentlist): #optional. Better to use gblocks if available
 	mylogger.debug("remove_gaps_from_complete_alignments(alignmentlist)")
 	global outputfilename
 	global proc_aln_length
@@ -597,7 +597,7 @@ def call_Gblocks(file_name, ORG_number): #this calls Gblocks with standard setti
 	tempfile_name, temp_name_dict = rename_for_gblocks(file_name)
 	gblocks_args = ['-t=p', '-e=-gb', '-d=n', '-b1=%s' %gb_cutoff_value, '-b2=%s' %gb_cutoff_value, '-b3=8', '-b4=10', '-b5=a']
 	
-	gblocks_command = [os.path.join(gblocks_path, "Gblocks"), tempfile_name] + gblocks_args
+	gblocks_command = [os.path.join(gblocks_path, "gblocks"), tempfile_name] + gblocks_args
 	call(gblocks_command)
 	rename_after_gblocks(tempfile_name + "-gb", temp_name_dict, file_name + "-gb")
 	
@@ -872,10 +872,10 @@ def main():
 			for delfile in aligned_filelist:
 				mylogger.debug("deleting {}".format(delfile))
 				os.remove(delfile)
-			if singlemarkertreelist:
-				for delfile in singlemarkertreelist:
-					mylogger.debug("deleting {}".format(delfile))
-					os.remove(delfile)
+			#if singlemarkertreelist:
+			#	for delfile in singlemarkertreelist:
+			#		mylogger.debug("deleting {}".format(delfile))
+			#		os.remove(delfile)
 			
 		mylogger.info("cleaning up RaxML tempfiles")
 		for delfile in os.listdir("."):
