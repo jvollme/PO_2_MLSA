@@ -10,18 +10,20 @@ from subprocess import call
 from Bio.Phylo.Consensus import *
 from Bio.Phylo.TreeConstruction import DistanceCalculator
 from Bio.Phylo.TreeConstruction import DistanceTreeConstructor
+import numpy
 
 #TODO: add parameters for gblocks
 
 myparser=argparse.ArgumentParser(description="\n==PO_2_MLSA.py v1.5 by John Vollmers==\nCreates concatenated alignments of UNIQUE Genes with orthologues in comparison organisms for the construction of MLSA-based phylogenetic trees.\nOptionally the resulting concatenated alignments may contain all gapped alignmentpositions or may be stripped either of ALL gapped positions or of all gapped positions in the flanking regions of each composite ortholog\nThis script is supposed to be part of a pipeline consisting of:\n\tA.)Conversion of Genbank/Embl-Files to ANNOTATED(!) Fastas using CDS_extractor.pl by Andreas Leimbach\n\tB.)Calculation of orthologs and paralogs using proteinortho5 (WITH the '-single' and '-self' arguments!)\n\tC.)The creation of concatenated MLSA-sequences based on:\n\t\t-the fasta sequences of step A\n\t\t-the proteinortho5-results from step B\n\nThe output-file will be in fasta format (but including gapped positions, so remember to use 'fasta_wgap' when loading into Arb!). However it's absolutely no problem to include other common output-alignmentformats on request!", formatter_class=argparse.RawTextHelpFormatter)
 myparser.add_argument("-po", "--proteinortho", action = "store", dest = "PO_file", help = "(String) file with proteinortho5 results", required = True)
 myparser.add_argument("-f", "--fastas", action = "store", dest = "fasta_path", help = "(String) path to fasta files (produced by CDS_extractor) \nDefault = current working directory", default = "")
+myparser.add_argument("--filter", action = "store_true", dest = "filter_outliers", default = False, help = "Filter outliers based on single marker phylogenies in order to remove HGT events (Default: False)")
 myparser.add_argument("-tp", "--temp_path", action = "store", dest = "temp_path", default = "", help = "Path for temporary files (will be created if does not exist)\nDefault =  current working directory")
 myparser.add_argument("-kt", "--keep_temp", action = "store_true", dest = "keep_temp", default = False, help = "Keep all temporary files and intermediate results\n(Multifasta_files containing the singe genes involved in the MLSA-alignments are stored in any case)\nDefault: delete all temporary files")
 myparser.add_argument("-am", "--align_method", action = "store", dest = "alignmeth", choices = ["muscle", "clustalw", "clustalw2", "clustalo"], default = "muscle", help = "The Alignmentmethod to use.\nDefault = 'muscle'")
 myparser.add_argument("-ap", "--aligner_path", action = "store", dest = "aligner_path", default = "", help = "(OPTIONAL: set path to the aligner of choice IF not included in global PATH variable")
 #myparser.add_argument("-dg", "--degap", action = "store", dest = "degap", choices = ["none", "all", "flanking"], default = "all", help = "(Only meant for use, if Gblocks is not installed\nSpecify if and which gaps to remove:\n\t'none' keep all gapped positions in the final MLSA-alignment\n\t'all' remove ALL gapped postitions in the alignments\n\t'flanking' remove flanking gapped positions from all individual alignments\nDefault = 'all'")
-myparser.add_argument("-F", "--filter", action = "store", dest = "afilter", choices = ["none", "degap_all", "degap_flanking", "gblocks"], default = "gblocks", help = "Specify if and how alignments should be filtered:\n\t'none' do not filter alignments (keep all gapped positions)\n\t'degap_all' remove ALL gapped postitions in the alignments (use only if gblock is not available)\n\t'degap_flanking' remove flanking gapped positions from all individual alignments (use only if gblocks is not available)\n'gblocks' use gblocks with default settings to degap and filter alignments (Default)")
+#myparser.add_argument("-F", "--filter", action = "store", dest = "afilter", choices = ["none", "degap_all", "degap_flanking", "gblocks"], default = "gblocks", help = "Specify if and how alignments should be filtered:\n\t'none' do not filter alignments (keep all gapped positions)\n\t'degap_all' remove ALL gapped postitions in the alignments (use only if gblock is not available)\n\t'degap_flanking' remove flanking gapped positions from all individual alignments (use only if gblocks is not available)\n'gblocks' use gblocks with default settings to degap and filter alignments (Default)")
 myparser.add_argument("-s", "--silent", action = "store_true", dest = "no_verbose", help = "non-verbose mode")
 myparser.add_argument("-t", "--threads", action = "store", dest = "nthreads", type = int, default = 1, help = "Maximum number of threads to use for alignment steps\nDefault = 1")
 #myparser.add_argument("-gb", "--gblocks", action = "store", dest = "gblocks", choices = ["n", "no", "f", "false", "y", "yes", "t", "true"], default = "true", help = "calls gblocks (if installed) to remove gapped positions and poorly aligned regions\n(Overrides '-dg'|'--degap'\nchoices:\n\t[n|no|f|false]: will NOT use Gblocks\n\t[y|yes|t|true]: WILL use Gblocks\nDefault = true (WILL use Gblocks)")
@@ -47,7 +49,7 @@ args = myparser.parse_args()
 
 #TOdo: add option "return_selection" to store selection of MLSA genes as unagligned multifastas or only lists of fasta-headers
 
-version = "v1.4"
+version = "v1.5"
 available_cores = multiprocessing.cpu_count() #counts how many cores are available, to check if the user-argument for threads can be fulfilled
 aln_length, proc_aln_length, OG_number = 0, 0, 0
 wstrings, estrings, lstrings = [], [], [] #warning, error and log messages respectively
@@ -60,8 +62,8 @@ raxml_prog = "raxmlHPC"
 verbose = True
 docontinue = True
 gblocks = True
-if args.afilter != "gblocks":
-	gblocks = False
+#if args.afilter != "gblocks":
+#	gblocks = False
 gblocks_path = args.gblocks_path
 erroroccured, warningoccured = False, False
 hline = "-" * 50
@@ -148,24 +150,23 @@ def checkargs():
 		if int(clustalo_version[0]) < 1 or (int(clustalo_version[0]) == 1 and int(clustalo_version[1]) < 2) : #only accept versions 1.2 and newer
 			raise OSError("found clustalo version is v%s ! Version 1.2 or higher is required!" % ".".join(clustalo_version))
 			
-	if gblocks:
-		if gblocks_path == "":
-			test_gblocks = which("Gblocks")
-			if test_gblocks == None:
-				raise OSError("can't locate Gblocks in any path in PATH variable. please provide a Path to Gblocks using the '-gbp' agrument, or choose a different filtering option ('-F')")
-			elif verbose:
-				print "Located Gblocks executable: %s" % test_gblocks
-		else:
-			if os.path.exists(gblocks_path) and os.path.isdir(gblocks_path):
-				if os.path.exists(os.path.join(gblocks_path, "Gblocks")) and os.path.isfile(os.path.join(gblocks_path, "Gblocks")):
-					if verbose:
-						print "Located Gblocks executable: %s" % os.path.join(gblocks_path, "Gblocks")
-			elif gblocks_path.endswith("Gblocks") and os.path.isfile(gblocks_path):
+	if gblocks_path == "":
+		test_gblocks = which("Gblocks")
+		if test_gblocks == None:
+			raise OSError("can't locate Gblocks in any path in PATH variable. please provide a Path to Gblocks using the '-gbp' agrument, or choose a different filtering option ('-F')")
+		elif verbose:
+			print "Located Gblocks executable: %s" % test_gblocks
+	else:
+		if os.path.exists(gblocks_path) and os.path.isdir(gblocks_path):
+			if os.path.exists(os.path.join(gblocks_path, "Gblocks")) and os.path.isfile(os.path.join(gblocks_path, "Gblocks")):
 				if verbose:
-					print "Located Gblocks executable: %s" % gblocks_path
-			else:
-				raise OSError("Gblocks executable could not be found in the specified path: %s" % gblocks_path)
-				
+					print "Located Gblocks executable: %s" % os.path.join(gblocks_path, "Gblocks")
+		elif gblocks_path.endswith("Gblocks") and os.path.isfile(gblocks_path):
+			if verbose:
+				print "Located Gblocks executable: %s" % gblocks_path
+		else:
+			raise OSError("Gblocks executable could not be found in the specified path: %s" % gblocks_path)
+			
 	if args.tree_method != "none":
 		#print "CHECKING raxml-binaries"
 		if args.treebuilder_path == "":
@@ -231,6 +232,7 @@ def check_PO_format(line):
 				mylogger.warning("Cannot clearly recognize Format of Proteinortho-results! This may produce erroneous results!\n\t For best results use Proteinortho5!")	
 	
 def read_PO_file(filename):
+	cutoff_perc = 99 #testing request that markers present in MOST but not ALL are included
 	mylogger.debug("read_PO_file(%s)" % filename)
 	open_PO_file = open(filename, 'r')
 	firstline = True
@@ -490,7 +492,7 @@ def remove_gaps_from_alignment_borders(alignmentlist): #optional. Better to use 
 	mylogger.debug("remove_gaps_from_alignment_borders(alignmentlist)")
 	global outputfilename
 	global proc_aln_length
-	outputfilename = outputfilename.replace("concatenated_orthologs_", "concatenated_orthologs_FlankingBordersDegapped_")
+	outputfilename = outputfilename.replace("concatenated_orthologs_", "concatenated_orthologs_FlankingBordersDegapped_Gblocked")
 	processed_alignmentlist = []
 	
 	for currentalignment in alignmentlist:
@@ -506,11 +508,10 @@ def remove_gaps_from_alignment_borders(alignmentlist): #optional. Better to use 
 				break
 		processed_alignmentlist.append(currentalignment[:, start:stop + 1])
 		
-	#print "keep_temp: " + str(args.keep_temp)
 	if args.keep_temp == True:
-		#print "keep_temp is 'True' --> will produce prossessed single alignment files"
 		processed_alignmentfiles = write_temp_alignments(processed_alignmentlist, "Processed_removedFLANKINGgaps_SINGLEalignment_MUSCLE_temp_fasta_OG")
-		
+	else:
+		processed_alignmentfiles = write_temp_alignments(processed_alignmentlist, "delme_tempfile_Processed_removedFLANKINGgaps_SINGLEalignment_MUSCLE_temp_fasta_OG")
 	#return processed_alignmentlist
 	return processed_alignmentfiles
 	
@@ -548,7 +549,7 @@ def rungblocks_on_single_alignments(alignmentlist, OG_number, headers):
 	for afile in alignmentlist:
 		renamesingleseqs(afile, headers)
 		mylogger.info("\tGblocking {}".format(afile))
-		gblocked_filelist.append(call_Gblocks(afile, OG_number))
+		gblocked_filelist.append(call_Gblocks(afile, len(headers)))
 		mylogger.info("\tGblocked file: {}".format(gblocked_filelist[-1]))
 	return gblocked_filelist
 
@@ -589,12 +590,12 @@ def rename_for_gblocks(align_file):
 #	-gapped positions have already been previously removed from FLANKING REGIONS of each individual markergene alignment (removing positions not covered by e.g. partial genes)
 #	-THEN all all alignments have been concatenated
 #	-THEN gblocks is called on this concatement here to remove bad alignment positions (BUT CHANGED flanking cutoff to 50% and KEEP ALL GAPPED POSITIONS!)
-def call_Gblocks(file_name, OG_number): #this calls Gblocks with standard settings. I tried not to overload the argument list for this python script
+def call_Gblocks(file_name, ORG_number): #this calls Gblocks with standard settings. I tried not to overload the argument list for this python script
 	mylogger.debug("call_Gblocks(%s)" % file_name)
 	gb_cutoff_quotient = 0.5 #fraction (0-9) of residues having to be identical/cimilar to count as "conserved". !!CONSIDER CHANGING THIS TO 0.25 IF POSSIBLE!!
-	gb_cutoff_value = int(OG_number * gb_cutoff_quotient) + 1
+	gb_cutoff_value = int(ORG_number * gb_cutoff_quotient) + 1
 	tempfile_name, temp_name_dict = rename_for_gblocks(file_name)
-	gblocks_args = ['-t=p', '-e=-gb', '-d=n', '-b2=%s' %gb_cutoff_value, '-b3=8', '-b4=10', '-b5=a']
+	gblocks_args = ['-t=p', '-e=-gb', '-d=n', '-b1=%s' %gb_cutoff_value, '-b2=%s' %gb_cutoff_value, '-b3=8', '-b4=10', '-b5=a']
 	
 	gblocks_command = [os.path.join(gblocks_path, "Gblocks"), tempfile_name] + gblocks_args
 	call(gblocks_command)
@@ -623,6 +624,9 @@ def concatenate_alignments(alignment_list, headers):
 	suffix_list = ["_cds_aa.fasta", ".fasta", ".fas", ".faa", ".fa"]#list of most probable input-sequence suffixes for removal from sequence identifier
 	counter = 0
 	maxnumber = len(alignment_list)
+	#print "\n----------fuuuuu"
+	#print alignment_list
+	#print "\n---------fuuuuu"
 	concatenated_alignment = alignment_list[0][:, 0:0] #simply create an empty an empty alignment with pre-defined placeholders for every comparison-genome (numpy annotation, as alignment-objects are based on numpy)
 	
 	for alignment in alignment_list:
@@ -722,7 +726,7 @@ def raxml(alignmentfile):
 	#the resultfile will be :"RAxML_bestTree.final_tree"
 	outputfiles = ["RAxML_bestTree." + outname]
 	mylogger.info("\tSUCCESS")
-	print "deleting temporary files"
+	mylogger.debug("deleting temporary files")
 	for delfile in os.listdir("."):
 		if delfile.startswith("RAxML_") and "." + outname + ".RUN." in delfile:
 			#print "deleting temp-file: " + delfile
@@ -739,6 +743,7 @@ def fasttree(alignmentfile):
 	mylogger.info(" created {}".format(outfile))
 	if exitstat == 1:
 		raise Exception("an error occured during fasttree. Maybe you have duplicate identifiers?")
+	return outfile
 	
 def randomnumber():
 	mylogger.debug("randomnumber()")
@@ -765,7 +770,7 @@ def main():
 			infotext += " --> will delete all temporary files "
 		mylogger.info(infotext)
 		mylogger.info("-using aligner '%s'" % args.alignmeth)
-		mylogger.info("-alignment filter: " + args.afilter)
+		#mylogger.info("-alignment filter: " + args.afilter)
 		headers, MLSA_list, OG_number = read_PO_file(args.PO_file)
 		##move this to checkargs()
 		
@@ -781,51 +786,55 @@ def main():
 			correct_for_muscle_bug(aligned_filelist, unaligned_filelist) #Necessary because bug in muscle '-stable' option (option disabled for this reason as of muscle version 3.8)
 		alignment_list = read_alignments(aligned_filelist)
 		mylogger.debug("length alignment_list after reading corrected files back in : %s" %len(alignment_list))
-		#Now removing all flanking gapped positions of all single alignments prior to concatenating and gblocks
+		
+		###Now removing all flanking gapped positions of all single alignments prior to gblocks and concatenating
 		mylogger.info("\n%s\nRemoving only the flanking gapped positions from all single alignments prior to concatenation" % hline)
 		alignment_list = remove_gaps_from_alignment_borders(alignment_list)
 		gblocked_alignment_list = rungblocks_on_single_alignments(alignment_list, OG_number, headers)
-		for a in gblocked_alignment_list:
-			fasttree(a)
-		raise Exception("I want to stop NOW")
+		#create fastrre phylogenies for each single markergene in order to filter out potentially falsly identified homologs (e.g. horizontal gentransfer) that may distort the phylogeny 
+		if args.filter_outliers:
+			mylogger.info("\nNOW FILTERING OUT POTENTIAL OUTLIERS")
+			singlemarkertreelist = []
+			for a in gblocked_alignment_list:
+				singlemarkertreelist.append(fasttree(a))
+			pf_treelist = [ pf_read_tree(infilename) for infilename in singlemarkertreelist ]
+			#if args.rootlabels != None: #TODO: add this option
+			#	mylogger.info("\nrerooting trees\n") #TODO: add this option
+			#	root_trees(singlemarkertreelist, pf_treelist, args.rootlabels) #TODO: add this option
+			pf_depthlist = [ pf_get_depth_sum(tree) for tree in pf_treelist ]
+			mylogger.info("total number of single marker trees :\t{}\n".format(len(pf_treelist)))
+			mylogger.info(" max depth:\t{}\n".format(max(pf_depthlist)))
+			mylogger.info(" min depth:\t{}\n".format(min(pf_depthlist)))
+			outlier_indices, mean, stdev = pf_find_outliers_meanbased(pf_depthlist) #only using mean here
+			mylogger.info(" mean depth:\t{}\n".format(mean))
+			mylogger.info(" standard deviation:\t{}\n".format(stdev))
+			mylogger.info("upper cutoff:\t{}\n".format(mean + (2 * stdev)))
+			mylogger.info("The following marker-alignments have been identified as outliers and will NOT be used for MLSA:\n{}".format([ " - " + gblocked_alignment_list[x] for x in outlier_indices]))
+			gblocked_alignment_list = [ gblocked_alignment_list[x] for x in range(len(gblocked_alignment_list)) if x not in outlier_indices ]
+			mylogger.info("--> Removed {} potential outliers from the alignment list prior to concatenating!".format(len(outlier_indices)))
 		
-		#if not gblocks and verbose:
-		#	mylogger.info("Leaving the single alignments as they are (Not removing any gapped or unconserved positions)")
 		mylogger.info("\n%s\nconcatenating alignments" % hline)
-		
-		concatenated_alignment = concatenate_alignments(alignment_list, headers)
+		concatenated_alignment = concatenate_alignments(read_alignments(alignment_list), headers)
 		mylogger.info("\n%s\nwriting concatenated alignment to fasta-file: %s" %(hline, outputfilename))
 		write_final_alignment(outputfilename, concatenated_alignment)
-		#gblocks filter(highly recommended)
-		#if gblocks:
-		#	
-		#	mylogger.info("running gblocks on %s" % outputfilename)
-		#	call_Gblocks(outputfilename, OG_number)
-		#	final_check = read_alignments([outputfilename + "-gb"])
-		#	proc_aln_length = len(final_check[0][0])
-		#	mylogger.info("-->Processed File: %s-gb\n-->Gblocks-Logfile: %s-gb.htm" %(outputfilename, outputfilename))
+
 		
 		#give summary
 		mylogger.info("=" * 50)
 #		mylogger.info("Finished alignments!\nthe individual (unaligned) ortholog selections were stored as the following multifastas: ")
 #		mylogger.info(", ".join(seq_filelist))
 		mylogger.info("Finished alignments!\nthe individual (unaligned) ortholog selections were stored under the following basename:\n\t%s " % os.path.join(args.out_path, "OGselection_MLSA_single_unaligned_multifasta_*"))
-		mylogger.info("\n%d genes concatenated to a final sequence length of %d residues per organism" %(OG_number, aln_length))
-		if gblocks:
-			mylogger.info("after 'gblocks' the remaining sequence length is %s residues" % proc_aln_length)
-			mylogger.info("\n-->final aligned and processed sequence saved as: %s-gb" % outputfilename)
-		else:
-			mylogger.info("\n-->final aligned sequence saved as: %s" % outputfilename)
-			mylogger.info("\nRemember to set sequence-type as 'PROTEIN' and filetype as 'fasta_wgap' when loading the MLSA sequence into Arb!\n")
-			
+		mylogger.info("\n%d genes concatenated degapped and gblocked to a final sequence length of %d residues per organism" %(OG_number, aln_length))
+		mylogger.info("\n-->final aligned and processed sequence saved as: %s" % outputfilename)
+
 		#RaxML
 		if "raxml" in args.tree_method:
 			mylogger.info("\nNow generating maximum likelihood trees from final output alignment")
 			if args.seed_nr == 0:
 				args.seed_nr = randomnumber()
 			treefiles = []
-			outtreename = "%s.%s.TREE" %(outputfilename + "-gb", args.tree_method)
-			treefiles.extend(eval(args.tree_method)(outputfilename + "-gb")) #corrected this to use gblocks-edited version
+			outtreename = "%s.%s.TREE" %(outputfilename, args.tree_method)
+			treefiles.extend(eval(args.tree_method)(outputfilename))
 			if docontinue:
 				mylogger.info("the following trees were generated:")
 				mylogger.info("\t" + "\n\t".join(treefiles))
@@ -833,8 +842,8 @@ def main():
 				mylogger.info("some kind of error occured during ML calculation")
 		elif "nj" in args.tree_method:
 			mylogger.info("\nNow generating neighbor-joining tree from final output alignment")
-			mylogger.debug("reading final alignment file: %s-gb" %outputfilename)
-			final_align = AlignIO.read(outputfilename + "-gb", "fasta") 
+			mylogger.debug("reading final alignment file: %s" %outputfilename)
+			final_align = AlignIO.read(outputfilename, "fasta") 
 			njtree = make_single_njtree(final_align)
 			if args.tree_method == "nj_bs" and args.nr_bootstraps > 1:
 				bs_list = run_multiprocess_bootstrap(final_align) #generate bootstrap trees using multiprocessing
@@ -856,15 +865,24 @@ def main():
 		if len(unaligned_filelist) > 0 and len(aligned_filelist) > 0 and not args.keep_temp:
 			mylogger.info("\n%s\ncleaning up temporary alignmentfiles" % hline)
 			for delfile in unaligned_filelist:
+				mylogger.debug("deleting {}".format(delfile))
 				os.remove(delfile)
 				if "clustalw" in args.alignmeth:
 					os.remove(delfile.rstrip(".fasta") + ".dnd") #remove pesky "guide-tree" files produced by clustal aligners as well
 			for delfile in aligned_filelist:
+				mylogger.debug("deleting {}".format(delfile))
 				os.remove(delfile)
+			if singlemarkertreelist:
+				for delfile in singlemarkertreelist:
+					mylogger.debug("deleting {}".format(delfile))
+					os.remove(delfile)
+			
 		mylogger.info("cleaning up RaxML tempfiles")
 		for delfile in os.listdir("."):
 			if "delme_tempfile" in delfile:
+				mylogger.debug("deleting {}".format(delfile))
 				os.remove(delfile)
+
 
 def make_single_njtree(protalign):
 	mylogger.debug("make_single_njtree(protalign)")
@@ -1032,6 +1050,57 @@ def run_multiprocess_bootstrap(alignments):
 	bs_trees = make_bootstrap_njtrees(alignments, args.nr_bootstraps)
 	mylogger.debug("finished generating %s bootstraptrees" % len(bs_trees))
 	return bs_trees
+
+def pf_read_tree(infilename): #phylofilter
+	infile = open(infilename, "r")
+	intree = list(Phylo.NewickIO.parse(infile))
+	#print infilename
+	#print intree
+	if len(intree) > 1:
+		sys.stderr.out.write("\nWARNING. {} contains {} trees. Will only consider the first. If these are not permutations of the same tree, please split them into individual files".format(infilenme, len(intree)))
+	elif len(intree) == 0:
+		raise IOError("ERROR: No tree in {}".format(infilename))
+	return intree[0]
+
+def pf_get_depth_sum(tree): #phylofilter
+	return tree.total_branch_length()
+
+def pf_get_mean_and_stdev(depthlist): #phylofilter
+	#import numpy
+	#depthmax = max(depthlist)
+	#depthmin = min(depthlist)
+	depthmean = numpy.mean(depthlist)
+	depthstdev = numpy.std(depthlist, ddof = 1)
+	return depthmean, depthstdev
+
+def pf_get_median_and_percentiles(depthlist): #phylofilter
+	#import numpy
+	median = numpy.median(depthlist)
+	upper95perc = numpy.percentile(depthlist, 95)
+	#upper75perc = numpy.percentile(depthlist, 75)
+	lower25perc = numpy.percentile(depthlist, 25)
+	#dmax = max(depthlist
+	#dmin = min(depthlist)
+	return median, upper95perc
+	
+def pf_find_outliers_meanbased(depthlist): #phylofilter
+	#depthlist = [ get_depth_sum(tree) for tree in treelist ]
+	mean, stdev = pf_get_mean_and_stdev(depthlist)
+	#lowerbound = mean - (stdev) #not 
+	upperbound = mean + (2 * stdev)
+	outlier_indices = []
+	for i in range(len(depthlist)):
+		if depthlist[i] > upperbound:
+			outlier_indices.append(i)
+	return outlier_indices, mean, stdev
+
+def pf_root_trees(infilenames, treelist, rootlabels): #phylofilter
+	for i in range(len(infilenames)):
+		outfilename = infilenames[i] + "_rerooted.newick"
+		outfile = open(outfilename, "w")
+		treelist[i].root_with_outgroup(rootlabels)
+		Phylo.NewickIO.write([treelist[i]], outfile)
+		outfile.close()
 
 if args.showversion:
 	print_version()

@@ -580,7 +580,7 @@ def rungblocks_on_single_alignments(alignmentlist, OG_number, headers):
 	for afile in alignmentlist:
 		renamesingleseqs(afile, headers)
 		mylogger.info("\tGblocking {}".format(afile))
-		gblocked_filelist.append(call_Gblocks(afile, OG_number))
+		gblocked_filelist.append(call_Gblocks(afile, len(headers)))
 		mylogger.info("\tGblocked file: {}".format(gblocked_filelist[-1]))
 	return gblocked_filelist
 
@@ -621,13 +621,13 @@ def rename_for_gblocks(align_file):
 #	-gapped positions have already been previously removed from FLANKING REGIONS of each individual markergene alignment (removing positions not covered by e.g. partial genes)
 #	-THEN all all alignments have been concatenated
 #	-THEN gblocks is called on this concatement here to remove bad alignment positions (BUT CHANGED flanking cutoff to 50% and KEEP ALL GAPPED POSITIONS!)
-def call_Gblocks(file_name, OG_number): #this calls Gblocks with standard settings. I tried not to overload the argument list for this python script
+def call_Gblocks(file_name, ORG_number): #this calls Gblocks with standard settings. I tried not to overload the argument list for this python script
 	mylogger.debug("call_Gblocks(%s)" % file_name)
 	gb_cutoff_quotient = 0.5 #fraction (0-9) of residues having to be identical/cimilar to count as "conserved". !!CONSIDER CHANGING THIS TO 0.25 IF POSSIBLE!!
-	gb_cutoff_value = int(OG_number * gb_cutoff_quotient) + 1
+	gb_cutoff_value = int(ORG_number * gb_cutoff_quotient) + 1
 	tempfile_name, temp_name_dict = rename_for_gblocks(file_name)
-	mylogger.debug("OG_number = {}, gb_cutoff_value = {}".format(OG_number, gb_cutoff_value))
-	gblocks_args = ['-t=p', '-e=-gb', '-d=n', '-b1=%s','-b2=%s' %gb_cutoff_value, '-b3=8', '-b4=10', '-b5=a']
+	mylogger.debug("ORG_number = {}, gb_cutoff_value = {}".format(ORG_number, gb_cutoff_value))
+	gblocks_args = ['-t=p', '-e=-gb', '-d=n', '-b1=%s' %gb_cutoff_value,'-b2=%s' %gb_cutoff_value, '-b3=8', '-b4=10', '-b5=a']
 	mylogger.debug(str(gblocks_args))
 	gblocks_command = [os.path.join(gblocks_path, "Gblocks"), tempfile_name] + gblocks_args
 	call(gblocks_command)
