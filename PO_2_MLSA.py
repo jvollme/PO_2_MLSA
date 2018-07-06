@@ -683,6 +683,7 @@ def raxml_rapidbs(alignmentfile): #parameters should be a dictionary (This dicti
 	#the resultfiles will be: "RAxML_bipartitions.rapidBS_final_tree" and "RAxML_bipartitionsBranchLabels.rapidBS_final_tree"
 	#Labels on nodes or branches, respectively
 	outputfiles = ["RAxML_bipartitions." + outname, "RAxML_bipartitionsBranchLabels." + outname]
+	return outputfiles
 
 def raxml_bs(alignmentfile):
 	mylogger.debug("raxml_bs(%s)" % alignmentfile)
