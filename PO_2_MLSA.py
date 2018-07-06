@@ -17,10 +17,10 @@ import numpy
 myparser=argparse.ArgumentParser(description="\n==PO_2_MLSA.py v1.5 by John Vollmers==\nCreates concatenated alignments of UNIQUE Genes with orthologues in comparison organisms for the construction of MLSA-based phylogenetic trees.\nOptionally the resulting concatenated alignments may contain all gapped alignmentpositions or may be stripped either of ALL gapped positions or of all gapped positions in the flanking regions of each composite ortholog\nThis script is supposed to be part of a pipeline consisting of:\n\tA.)Conversion of Genbank/Embl-Files to ANNOTATED(!) Fastas using CDS_extractor.pl by Andreas Leimbach\n\tB.)Calculation of orthologs and paralogs using proteinortho5 (WITH the '-single' and '-self' arguments!)\n\tC.)The creation of concatenated MLSA-sequences based on:\n\t\t-the fasta sequences of step A\n\t\t-the proteinortho5-results from step B\n\nThe output-file will be in fasta format (but including gapped positions, so remember to use 'fasta_wgap' when loading into Arb!). However it's absolutely no problem to include other common output-alignmentformats on request!", formatter_class=argparse.RawTextHelpFormatter)
 myparser.add_argument("-po", "--proteinortho", action = "store", dest = "PO_file", help = "(String) file with proteinortho5 results", required = True)
 myparser.add_argument("-f", "--fastas", action = "store", dest = "fasta_path", help = "(String) path to fasta files (produced by CDS_extractor) \nDefault = current working directory", default = "")
-myparser.add_argument("--filter", action = "store_true", dest = "filter_outliers", default = False, help = "Filter outliers based on single marker phylogenies in order to remove HGT events (Default: False)")
+myparser.add_argument("--filter", action = "store_true", dest = "filter_outliers", default = False, help = "OPTIONAL: Filter outliers based on single marker phylogenies in order to remove HGT events (Default: False)")
 myparser.add_argument("-tp", "--temp_path", action = "store", dest = "temp_path", default = "", help = "Path for temporary files (will be created if does not exist)\nDefault =  current working directory")
 myparser.add_argument("-kt", "--keep_temp", action = "store_true", dest = "keep_temp", default = False, help = "Keep all temporary files and intermediate results\n(Multifasta_files containing the singe genes involved in the MLSA-alignments are stored in any case)\nDefault: delete all temporary files")
-myparser.add_argument("-am", "--align_method", action = "store", dest = "alignmeth", choices = ["muscle", "clustalw", "clustalw2", "clustalo"], default = "muscle", help = "The Alignmentmethod to use.\nDefault = 'muscle'")
+#myparser.add_argument("-am", "--align_method", action = "store", dest = "alignmeth", choices = ["muscle", "clustalw", "clustalw2", "clustalo"], default = "muscle", help = "The Alignmentmethod to use.\nDefault = 'muscle'")
 myparser.add_argument("-ap", "--aligner_path", action = "store", dest = "aligner_path", default = "", help = "(OPTIONAL: set path to the aligner of choice IF not included in global PATH variable")
 #myparser.add_argument("-dg", "--degap", action = "store", dest = "degap", choices = ["none", "all", "flanking"], default = "all", help = "(Only meant for use, if gblocks is not installed\nSpecify if and which gaps to remove:\n\t'none' keep all gapped positions in the final MLSA-alignment\n\t'all' remove ALL gapped postitions in the alignments\n\t'flanking' remove flanking gapped positions from all individual alignments\nDefault = 'all'")
 myparser.add_argument("-s", "--silent", action = "store_true", dest = "no_verbose", help = "non-verbose mode")
@@ -49,10 +49,11 @@ version = "v1.5.1"
 available_cores = multiprocessing.cpu_count() #counts how many cores are available, to check if the user-argument for threads can be fulfilled
 aln_length, proc_aln_length, OG_number = 0, 0, 0
 wstrings, estrings, lstrings = [], [], [] #warning, error and log messages respectively
+alignmeth = "muscle"
 
 if not os.path.exists(args.out_path):
 	os.makedirs(args.out_path)
-outputfilename = os.path.join(args.out_path, "concatenated_orthologs_%s_%s.fasta" %(args.alignmeth, os.path.basename(args.PO_file)))
+outputfilename = os.path.join(args.out_path, "concatenated_orthologs_%s_%s.fasta" %(alignmeth, os.path.basename(args.PO_file)))
 logfilename = os.path.join(args.out_path, "PO_2_MLSA_%s.log" % time.strftime("%Y%m%d%H%M%S"))
 raxml_prog = "raxmlHPC"
 verbose = True
@@ -114,14 +115,14 @@ def checkargs():
 		
 	if args.aligner_path != "":
 		if os.path.exists(args.aligner_path) and os.path.isdir(args.aligner_path):
-			if not os.path.exists(os.path.join(args.aligner_path, args.alignmeth)):
-				raise OSError("can't find '%s' at %s" %(args.alignmeth, args.aligner_path))
+			if not os.path.exists(os.path.join(args.aligner_path, alignmeth)):
+				raise OSError("can't find '%s' at %s" %(alignmeth, args.aligner_path))
 		else:
 			raise OSError("aligner_path: '%s' does not exist or is not a directory!" % args.aligner_path)
 	elif args.aligner_path == "":
-		test_aligner = which(args.alignmeth)
+		test_aligner = which(alignmeth)
 		if test_aligner == None:
-			raise OSError("Can't find %s in any directory in the PATH variable. Please provide a path" % args.alignmeth)
+			raise OSError("Can't find %s in any directory in the PATH variable. Please provide a path" % alignmeth)
 			
 	if not os.path.exists(args.PO_file) or not os.path.isfile(args.PO_file):
 		raise OSError("cannot find proteinortho-resultfile: %s" % args.PO_file)
@@ -140,7 +141,7 @@ def checkargs():
 			os.mkdir(args.out_path)
 		mylogger.info("-Will store final result files in %s" % os.path.abspath(args.out_path))
 		
-	if args.alignmeth == "clustalo" and docontinue: #check clustalo version
+	if alignmeth == "clustalo" and docontinue: #check clustalo version
 		clustalomega_cline = ClustalOmegaCommandline("clustalo", version = True)
 		clustalo_version = clustalomega_cline()[0].rstrip().split(".")
 		if int(clustalo_version[0]) < 1 or (int(clustalo_version[0]) == 1 and int(clustalo_version[1]) < 2) : #only accept versions 1.2 and newer
@@ -329,8 +330,8 @@ def write_temp_files(record_dict, MLSA_list, prefix):
 	return unaligned_filelist
 
 def make_alignments(unaligned_filelist): 
-	mylogger.debug("run_multiprocess_alignment(%s, unaligned_filelist)" % args.alignmeth)
-	mylogger.info("\n%s\nAligning Orthologeous Groups (OGs) using %s and %d cpus" %(hline, args.alignmeth, args.nthreads))
+	mylogger.debug("run_multiprocess_alignment(%s, unaligned_filelist)" % alignmeth)
+	mylogger.info("\n%s\nAligning Orthologeous Groups (OGs) using %s and %d cpus" %(hline, alignmeth, args.nthreads))
 	full_thread_mp_groups = len(unaligned_filelist) // args.nthreads
 	remaining_mp_group_threads = len(unaligned_filelist) % args.nthreads
 	aligned_filelist = []
@@ -338,17 +339,17 @@ def make_alignments(unaligned_filelist):
 	
 	for mp_group in range(full_thread_mp_groups):
 		endindex = startindex + args.nthreads
-		mylogger.debug("aligned_filelist.extend(run_multiprocess_alignment(%s, unaligned_filelist[%d:%d]))" %(args.alignmeth, startindex, endindex))
-		aligned_filelist.extend(run_multiprocess_alignment(args.alignmeth, unaligned_filelist[startindex:endindex]))
-		sys.stdout.write("\raligned %d of %d OGs using %s" %(endindex, len(unaligned_filelist), args.alignmeth))
+		mylogger.debug("aligned_filelist.extend(run_multiprocess_alignment(%s, unaligned_filelist[%d:%d]))" %(alignmeth, startindex, endindex))
+		aligned_filelist.extend(run_multiprocess_alignment(alignmeth, unaligned_filelist[startindex:endindex]))
+		sys.stdout.write("\raligned %d of %d OGs using %s" %(endindex, len(unaligned_filelist), alignmeth))
 		sys.stdout.flush()
 		startindex = endindex
 	
 	#finish off any remaining alignment jobs (in case the total number of alignment-jobs was not evenly divisible by the number of cpus)
 	if remaining_mp_group_threads > 0:
 		endindex = len(unaligned_filelist)
-		aligned_filelist.extend(run_multiprocess_alignment(args.alignmeth, unaligned_filelist[startindex:endindex]))
-		sys.stdout.write("\raligned %d of %d OGs using %s" %(endindex, len(unaligned_filelist), args.alignmeth))
+		aligned_filelist.extend(run_multiprocess_alignment(alignmeth, unaligned_filelist[startindex:endindex]))
+		sys.stdout.write("\raligned %d of %d OGs using %s" %(endindex, len(unaligned_filelist), alignmeth))
 		sys.stdout.flush()
 	
 #	print "\n".join(aligned_filelist)
@@ -360,7 +361,7 @@ def make_alignments(unaligned_filelist):
 
 def clustalw(inputfile, mp_output):
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_CLUSTALW_temp_fasta_", 1)
-		clustalw_cline = ClustalwCommandline(os.path.join(args.aligner_path, args.alignmeth), INFILE = inputfile, outfile = outputfile, type = "PROTEIN", align = True, quiet = True, OUTORDER = "INPUT")
+		clustalw_cline = ClustalwCommandline(os.path.join(args.aligner_path, alignmeth), INFILE = inputfile, outfile = outputfile, type = "PROTEIN", align = True, quiet = True, OUTORDER = "INPUT")
 		try:
 			clustalw_cline()
 			mp_output.put(outputfile)
@@ -369,20 +370,20 @@ def clustalw(inputfile, mp_output):
 
 def clustalw2(inputfile, mp_output):
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_CLUSTALW2_temp_fasta_", 1)
-		clustalw_cline = ClustalwCommandline(os.path.join(args.aligner_path, args.alignmeth), INFILE = inputfile, outfile = outputfile, type = "PROTEIN", align = True, quiet = True, OUTORDER = "INPUT")
+		clustalw_cline = ClustalwCommandline(os.path.join(args.aligner_path, alignmeth), INFILE = inputfile, outfile = outputfile, type = "PROTEIN", align = True, quiet = True, OUTORDER = "INPUT")
 		clustalw_cline()
 		mp_output.put(outputfile)
 
 def clustalo(inputfile, mp_output):#Todo: find out a way to check clustalo version
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_CLUSTALO_temp_fasta_", 1)
-		clustalomega_cline = ClustalOmegaCommandline(os.path.join(args.aligner_path, args.alignmeth), infile = inputfile, outfile = outputfile, seqtype = "Protein", threads = args.nthreads, verbose = False, force = True, outputorder = "input-order")
+		clustalomega_cline = ClustalOmegaCommandline(os.path.join(args.aligner_path, alignmeth), infile = inputfile, outfile = outputfile, seqtype = "Protein", threads = args.nthreads, verbose = False, force = True, outputorder = "input-order")
 		clustalomega_cline()
 		mp_output.put(outputfile)
 
 def muscle(inputfile, mp_output):
 		#mylogger.debug("muscle(%s)" % inputfile)
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_MUSCLE_temp_fasta_", 1)
-		muscle_cline = MuscleCommandline(os.path.join(args.aligner_path, args.alignmeth), input = inputfile, out = outputfile, quiet = True) #add 'stable = True' to the end of this list, if the stable-bug in muscle is fixed (remove the correct_for_muscle_bug() method in that case)
+		muscle_cline = MuscleCommandline(os.path.join(args.aligner_path, alignmeth), input = inputfile, out = outputfile, quiet = True) #add 'stable = True' to the end of this list, if the stable-bug in muscle is fixed (remove the correct_for_muscle_bug() method in that case)
 		muscle_cline()
 		mp_output.put(outputfile)
 
@@ -471,7 +472,7 @@ def write_temp_alignments(alignmentlist, prefix):
 def read_alignments(input_filelist):
 	mylogger.info("read_alignments(input_filelist)")
 	alignmentlist = []
-	if args.alignmeth == "muscle" or args.alignmeth == "clustalo" or len(input_filelist) == 1: #Last condition assumes that ONLY final result files would be passed as a filelist of only one file
+	if alignmeth == "muscle" or alignmeth == "clustalo" or len(input_filelist) == 1: #Last condition assumes that ONLY final result files would be passed as a filelist of only one file
 		aformat = "fasta"# just a workaround for this method
 	else:
 		aformat = "clustal"
@@ -738,7 +739,7 @@ def main():
 		if not args.keep_temp:
 			infotext += " --> will delete all temporary files "
 		mylogger.info(infotext)
-		mylogger.info("-using aligner '%s'" % args.alignmeth)
+		mylogger.info("-using aligner '%s'" % alignmeth)
 		#mylogger.info("-alignment filter: " + args.afilter)
 		headers, MLSA_list, OG_number = read_PO_file(args.PO_file)
 		##move this to checkargs()
@@ -751,7 +752,7 @@ def main():
 		#alignments
 		aligned_filelist = make_alignments(unaligned_filelist)
 		mylogger.debug("MAIN: length of aligned_filelist = %s" % len(aligned_filelist))
-		if args.alignmeth == "muscle":
+		if alignmeth == "muscle":
 			correct_for_muscle_bug(aligned_filelist, unaligned_filelist) #Necessary because bug in muscle '-stable' option (option disabled for this reason as of muscle version 3.8)
 		alignment_list = read_alignments(aligned_filelist)
 		mylogger.debug("length alignment_list after reading corrected files back in : %s" %len(alignment_list))
@@ -836,7 +837,7 @@ def main():
 			for delfile in unaligned_filelist:
 				mylogger.debug("deleting {}".format(delfile))
 				os.remove(delfile)
-				if "clustalw" in args.alignmeth:
+				if "clustalw" in alignmeth:
 					os.remove(delfile.rstrip(".fasta") + ".dnd") #remove pesky "guide-tree" files produced by clustal aligners as well
 			for delfile in aligned_filelist:
 				mylogger.debug("deleting {}".format(delfile))
