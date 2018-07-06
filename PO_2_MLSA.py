@@ -25,10 +25,10 @@ myparser.add_argument("-ap", "--aligner_path", action = "store", dest = "aligner
 #myparser.add_argument("-dg", "--degap", action = "store", dest = "degap", choices = ["none", "all", "flanking"], default = "all", help = "(Only meant for use, if gblocks is not installed\nSpecify if and which gaps to remove:\n\t'none' keep all gapped positions in the final MLSA-alignment\n\t'all' remove ALL gapped postitions in the alignments\n\t'flanking' remove flanking gapped positions from all individual alignments\nDefault = 'all'")
 myparser.add_argument("-s", "--silent", action = "store_true", dest = "no_verbose", help = "non-verbose mode")
 myparser.add_argument("-t", "--threads", action = "store", dest = "nthreads", type = int, default = 1, help = "Maximum number of threads to use for alignment steps\nDefault = 1")
-myparser.add_argument("-gbp", "--gblocks_path", action = "store", dest = "gblocks_path", default = "Gblocks", help = "Gblocks binaries to use (include path to binaries if not listed in $PATH). Default: \"Gblocks\" (assumed to be in PATH)")
+myparser.add_argument("-gbb", "--gblocks", action = "store", dest = "gblocks_binary", default = "Gblocks", help = "Gblocks binaries to use (include path to binaries if not listed in $PATH). Default: \"Gblocks\" (assumed to be in PATH)")
 myparser.add_argument("-op", "--out_path", action = "store", dest = "out_path", default = ".", help = "Path to output (will be created if it does not exist)\nDefault = current working directory")
 myparser.add_argument("-mt", "--make_tree", action = "store", dest = "tree_method", choices = ["raxml", "raxml_bs", "raxml_rapidbs", "nj", "nj_bs", "none"], default = "none", help = "Generate ML phylogenetic trees using RAxML with the substitution model \"PROTGAMMAAUTO\"\n\tchoices:\t\"raxml\": single tree without bootstraps (using new rapid hill climbing)\n\t\traxml_bs: thorough bootstrap analyses and search for best ML tree\n\t\traxml_rapidbs: rapid bootstrap analyses and search for best ML tree in one run\n\t\tnone\nDefault = none")
-myparser.add_argument("-rmlp", "--raxml_path", action = "store", dest = "raxml_path", default = "", help = "RaxML excecutable biaries to use (Include path to binary if not listed in $PATH). Default: check for common naming of raxml binaries in $PATH, prioritizing binaries with \"PTHREADS\" in the name")
+myparser.add_argument("-rmlb", "--raxml", action = "store", dest = "raxml_binary", default = "", help = "RaxML excecutable biaries to use (Include path to binary if not listed in $PATH). Default: check for common naming of raxml binaries in $PATH, prioritizing binaries with \"PTHREADS\" in the name")
 myparser.add_argument("-sd", "--seed", action = "store", dest = "seed_nr", type = int, default = 0, help = "Integer to provide as seed for RAxML\n0 = seed generated randomly\nDefault = random seed")
 myparser.add_argument("-bs", "--bootstraps", action = "store", dest = "nr_bootstraps", type = int, default = 1000, help = "Number of bootstraps(if any)\ndefault = 1000")
 #myparser.add_argument("-ctba", "--custom_tree_builder_args", action = "store", dest = "custom_tree_builder_args", default = None, help = "custom arguments for raxml. CAUTION: will overide Only use if you know ExACTLY what you are doing!")
@@ -62,7 +62,7 @@ docontinue = True
 gblocks = True
 #if args.afilter != "gblocks":
 #	gblocks = False
-#gblocks_path = args.gblocks_path
+#gblocks_binary = args.gblocks_binary
 erroroccured, warningoccured = False, False
 hline = "-" * 50
 if args.subst_model in ["identity", "blosum", "pam"]:
@@ -148,7 +148,7 @@ def checkargs():
 		if int(clustalo_version[0]) < 1 or (int(clustalo_version[0]) == 1 and int(clustalo_version[1]) < 2) : #only accept versions 1.2 and newer
 			raise OSError("found clustalo version is v%s ! Version 1.2 or higher is required!" % ".".join(clustalo_version))
 			
-	if args.gblocks_path == "Gblocks":
+	if args.gblocks_binary in ["Gblocks", "gblocks"]:
 		for gblock_name in ["Gblocks", "gblocks"]: #apparently gblocks can be named in lower OR upper case on some systems
 			test_gblocks = which(gblock_name)
 			if test_gblocks != None:
@@ -159,19 +159,17 @@ def checkargs():
 		elif verbose:
 			mylogger.info("Located gblocks executable: %s" % test_gblocks)
 	else:
-		if os.path.exists(gblocks_path) and os.path.isdir(gblocks_path):
-			if os.path.exists(os.path.join(gblocks_path, "gblocks")) and os.path.isfile(os.path.join(gblocks_path, "gblocks")):
-				if verbose:
-					print "Located gblocks executable: %s" % os.path.join(gblocks_path, "gblocks")
-		elif gblocks_path.endswith("gblocks") and os.path.isfile(gblocks_path):
+		if os.path.exists(args.gblocks_binary) and os.path.isfile(args.gblocks_binary):
 			if verbose:
-				mylogger.info("Located gblocks executable: %s" % gblocks_path)
+				print "Located gblocks executable: %s" % os.path.join(args.gblocks_binary, "gblocks")
+		elif os.path.isdir(args.gblocks_binary):
+			raise OSError("\"{}\" specified as Gblocks binary, But it is a directory not a binary!".format(args.gblocks_binary))
 		else:
-			raise OSError("gblocks executable could not be found in the specified path: %s" % gblocks_path)
+			raise OSError("the specified gblocks executable \"{}\" does not exist!".format(args.gblocks_binary))
 			
 	if args.tree_method in ["raxml", "raxml_bs", "raxml_rapidbs"]:
 		#print "CHECKING raxml-binaries"
-		if args.raxml_path == "":
+		if args.raxml_binary == "":
 			if which("raxmlHPC") == None and which("raxmlHPC-PTHREADS") == None and which("raxmlHPC-PTHREADS-SSE3") == None and which("raxmlHPC-SSE3") == None:
 				raise OSError("ERROR: No raxmlHPC binaries found in any directory within $PATH! please provide a PATH to raxml binaries!")
 				args.tree_method = "none"
@@ -200,8 +198,8 @@ def checkargs():
 						mylogger.warning("This script was devised for and tested with RAxML v8.0.20. Your version is v%s !\n\tThis may very well still work, but if it doesn't it's YOUR fault!" % ".".join(version))
 				except:
 					mylogger.warning("This script was devised for and tested with RAxML v8.0.20.\n\tNot sure which version of RAxML you're using, but it sure as hell isn't v7 or v8!\n\tThis may very well still work, but if it doesn't it's YOUR fault!")
-		elif os.path.exists(args.raxml_path) and os.path.isfile(args.raxml_path):
-			if args.nthreads > 1 and not "PTHREADS" in args.raxml_path:
+		elif os.path.exists(args.raxml_binary) and os.path.isfile(args.raxml_binary):
+			if args.nthreads > 1 and not "PTHREADS" in args.raxml_binary:
 				mylogger.warning("multithreading is only supported with 'PTHREADS'-versions of raxml. Not sure if your choosen binaries support this.\t\nif raxml calculations fail, recompile raxml with 'PTHREADS'-option")
 			try:
 				checkraxml_cline = RaxmlCommandline(version = True)
@@ -211,10 +209,10 @@ def checkargs():
 				version = versiontext[startv:startv+endv].split(".")
 				if int(version[0]) < 8 or (int(version[0]) == 8 and int(version[1]) == 0 and int(version[2]) < 20):
 						mylogger.warning("This script was devised for and tested with RAxML v8.0.20. Your version is v%s !\n\tThis may very well still work, but if it doesn't it's YOUR fault!" % ".".join(version))
-				raxml_prog = args.raxml_path
+				raxml_prog = args.raxml_binary
 				
 			except:
-				mylogger.warning("Correct raxML-version not found under %s !\nWill NOT calculate ML trees!" % args.raxml_path)
+				mylogger.warning("Correct raxML-version not found under %s !\nWill NOT calculate ML trees!" % args.raxml_binary)
 				args.tree_method = "none"
 
 def which(thisfile):
@@ -599,7 +597,7 @@ def call_Gblocks(file_name, ORG_number): #this calls Gblocks with standard setti
 	tempfile_name, temp_name_dict = rename_for_gblocks(file_name)
 	gblocks_args = ['-t=p', '-e=-gb', '-d=n', '-b1=%s' %gb_cutoff_value, '-b2=%s' %gb_cutoff_value, '-b3=8', '-b4=10', '-b5=a']
 	
-	gblocks_command = [args.gblocks_path, tempfile_name] + gblocks_args
+	gblocks_command = [args.gblocks_binary, tempfile_name] + gblocks_args
 	call(gblocks_command)
 	rename_after_gblocks(tempfile_name + "-gb", temp_name_dict, file_name + "-gb")
 	
