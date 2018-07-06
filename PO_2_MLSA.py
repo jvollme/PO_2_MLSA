@@ -169,7 +169,7 @@ def checkargs():
 		else:
 			raise OSError("gblocks executable could not be found in the specified path: %s" % gblocks_path)
 			
-	if args.tree_method != "none":
+	if args.tree_method in ["raxml", "raxml_bs", "raxml_rapidbs"]:
 		#print "CHECKING raxml-binaries"
 		if args.treebuilder_path == "":
 			if which("raxmlHPC") == None and which("raxmlHPC-PTHREADS") == None and which("raxmlHPC-PTHREADS-SSE3") == None and which("raxmlHPC-SSE3") == None:
@@ -599,7 +599,7 @@ def call_Gblocks(file_name, ORG_number): #this calls Gblocks with standard setti
 	tempfile_name, temp_name_dict = rename_for_gblocks(file_name)
 	gblocks_args = ['-t=p', '-e=-gb', '-d=n', '-b1=%s' %gb_cutoff_value, '-b2=%s' %gb_cutoff_value, '-b3=8', '-b4=10', '-b5=a']
 	
-	gblocks_command = [os.path.join(gblocks_path, "gblocks"), tempfile_name] + gblocks_args
+	gblocks_command = [args.gblocks_path, tempfile_name] + gblocks_args
 	call(gblocks_command)
 	rename_after_gblocks(tempfile_name + "-gb", temp_name_dict, file_name + "-gb")
 	
