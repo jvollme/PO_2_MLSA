@@ -21,7 +21,7 @@ myparser.add_argument("--filter", action = "store_true", dest = "filter_outliers
 myparser.add_argument("-tp", "--temp_path", action = "store", dest = "temp_path", default = "", help = "Path for temporary files (will be created if does not exist)\nDefault =  current working directory")
 myparser.add_argument("-kt", "--keep_temp", action = "store_true", dest = "keep_temp", default = False, help = "Keep all temporary files and intermediate results\n(Multifasta_files containing the singe genes involved in the MLSA-alignments are stored in any case)\nDefault: delete all temporary files")
 #myparser.add_argument("-am", "--align_method", action = "store", dest = "alignmeth", choices = ["muscle", "clustalw", "clustalw2", "clustalo"], default = "muscle", help = "The Alignmentmethod to use.\nDefault = 'muscle'")
-myparser.add_argument("-ap", "--aligner_path", action = "store", dest = "aligner_path", default = "", help = "(OPTIONAL: set path to the aligner of choice IF not included in global PATH variable")
+myparser.add_argument("-mb", "--muscle_binary", action = "store", dest = "muscle_binary", default = "muscle", help = "Muscle binary to use (including path if not in $PATH). default: assume \"muscle\" in $PATH")
 #myparser.add_argument("-dg", "--degap", action = "store", dest = "degap", choices = ["none", "all", "flanking"], default = "all", help = "(Only meant for use, if gblocks is not installed\nSpecify if and which gaps to remove:\n\t'none' keep all gapped positions in the final MLSA-alignment\n\t'all' remove ALL gapped postitions in the alignments\n\t'flanking' remove flanking gapped positions from all individual alignments\nDefault = 'all'")
 myparser.add_argument("-s", "--silent", action = "store_true", dest = "no_verbose", help = "non-verbose mode")
 myparser.add_argument("-t", "--threads", action = "store", dest = "nthreads", type = int, default = 1, help = "Maximum number of threads to use for alignment steps\nDefault = 1")
@@ -31,7 +31,7 @@ myparser.add_argument("-mt", "--make_tree", action = "store", dest = "tree_metho
 myparser.add_argument("-rmlb", "--raxml", action = "store", dest = "raxml_binary", default = "", help = "RaxML excecutable biaries to use (Include path to binary if not listed in $PATH). Default: check for common naming of raxml binaries in $PATH, prioritizing binaries with \"PTHREADS\" in the name")
 myparser.add_argument("-sd", "--seed", action = "store", dest = "seed_nr", type = int, default = 0, help = "Integer to provide as seed for RAxML\n0 = seed generated randomly\nDefault = random seed")
 myparser.add_argument("-bs", "--bootstraps", action = "store", dest = "nr_bootstraps", type = int, default = 1000, help = "Number of bootstraps(if any)\ndefault = 1000")
-#myparser.add_argument("-ctba", "--custom_tree_builder_args", action = "store", dest = "custom_tree_builder_args", default = None, help = "custom arguments for raxml. CAUTION: will overide Only use if you know ExACTLY what you are doing!")
+#myparser.add_argument("-ctba", "--custom_tree_builder_args", action = "store", dest = "custom_tree_builder_args", default = None, help = "custom arguments for raxml. CAUTION: will overide Only use if you know EXACTLY what you are doing!")
 myparser.add_argument("-v", "--version", action = "store_true", dest = "showversion", default = False, help = "show version information and then quit (don't run complete script)")
 myparser.add_argument("--debug", action = "store_true", dest = "debug", default = False, help = "Log extra info for debugging")
 myparser.add_argument("--nj_substmodel", action = "store", dest = "subst_model",\
@@ -45,7 +45,7 @@ args = myparser.parse_args()
 
 #TOdo: add option "return_selection" to store selection of MLSA genes as unagligned multifastas or only lists of fasta-headers
 
-version = "v1.5.1"
+version = "v1.5.2"
 available_cores = multiprocessing.cpu_count() #counts how many cores are available, to check if the user-argument for threads can be fulfilled
 aln_length, proc_aln_length, OG_number = 0, 0, 0
 wstrings, estrings, lstrings = [], [], [] #warning, error and log messages respectively
@@ -113,16 +113,17 @@ def checkargs():
 	if args.fasta_path != "" and (not os.path.exists(args.fasta_path) or not os.path.isdir(args.fasta_path)):
 		raise OSError("fasta_path: '%s' does not exist or is no directory!" % args.fasta_path)
 		
-	if args.aligner_path != "":
-		if os.path.exists(args.aligner_path) and os.path.isdir(args.aligner_path):
-			if not os.path.exists(os.path.join(args.aligner_path, alignmeth)):
-				raise OSError("can't find '%s' at %s" %(alignmeth, args.aligner_path))
-		else:
-			raise OSError("aligner_path: '%s' does not exist or is not a directory!" % args.aligner_path)
-	elif args.aligner_path == "":
+	if args.muscle_binary != "muscle":
+		if os.path.exists(args.muscle_binary) and os.path.isdir(args.muscle_binary):
+			raise OSError("{} was specified as binary for muscle-aligner, but is actually a directory".format(args.muscle_binary))
+		elif not os.path.exists(args.muscle_binary):
+				raise OSError("muscle binary \"{}\" does not exist".format(args.muscle_binary))
+		elif os.path.exists(args.muscle_binary) and os.path.isfile(args.muscle_binary):
+			mylogger.info("using \"{}\" for alignments".format(args.muscle_binary))
+	elif args.muscle_binary == "muscle":
 		test_aligner = which(alignmeth)
 		if test_aligner == None:
-			raise OSError("Can't find %s in any directory in the PATH variable. Please provide a path" % alignmeth)
+			raise OSError("Can't find \"%s\" in any directory in the PATH variable. Please provide the complete path to the binary" % alignmeth)
 			
 	if not os.path.exists(args.PO_file) or not os.path.isfile(args.PO_file):
 		raise OSError("cannot find proteinortho-resultfile: %s" % args.PO_file)
@@ -359,7 +360,7 @@ def make_alignments(unaligned_filelist):
 	mylogger.debug("length of aligned_filelist: %s" %len(aligned_filelist)) 
 	return aligned_filelist
 
-def clustalw(inputfile, mp_output):
+def clustalw(inputfile, mp_output): #deactivated
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_CLUSTALW_temp_fasta_", 1)
 		clustalw_cline = ClustalwCommandline(os.path.join(args.aligner_path, alignmeth), INFILE = inputfile, outfile = outputfile, type = "PROTEIN", align = True, quiet = True, OUTORDER = "INPUT")
 		try:
@@ -368,13 +369,13 @@ def clustalw(inputfile, mp_output):
 		except Exception:
 			raise RuntimeError("Your clustalw version is older than v2 (probably v1.83). You should use version 2 or newer (called clustalw2 on many systems)")
 
-def clustalw2(inputfile, mp_output):
+def clustalw2(inputfile, mp_output): #deactivated
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_CLUSTALW2_temp_fasta_", 1)
 		clustalw_cline = ClustalwCommandline(os.path.join(args.aligner_path, alignmeth), INFILE = inputfile, outfile = outputfile, type = "PROTEIN", align = True, quiet = True, OUTORDER = "INPUT")
 		clustalw_cline()
 		mp_output.put(outputfile)
 
-def clustalo(inputfile, mp_output):#Todo: find out a way to check clustalo version
+def clustalo(inputfile, mp_output):#Todo: find out a way to check clustalo version #deactivated
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_CLUSTALO_temp_fasta_", 1)
 		clustalomega_cline = ClustalOmegaCommandline(os.path.join(args.aligner_path, alignmeth), infile = inputfile, outfile = outputfile, seqtype = "Protein", threads = args.nthreads, verbose = False, force = True, outputorder = "input-order")
 		clustalomega_cline()
@@ -383,7 +384,7 @@ def clustalo(inputfile, mp_output):#Todo: find out a way to check clustalo versi
 def muscle(inputfile, mp_output):
 		#mylogger.debug("muscle(%s)" % inputfile)
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_MUSCLE_temp_fasta_", 1)
-		muscle_cline = MuscleCommandline(os.path.join(args.aligner_path, alignmeth), input = inputfile, out = outputfile, quiet = True) #add 'stable = True' to the end of this list, if the stable-bug in muscle is fixed (remove the correct_for_muscle_bug() method in that case)
+		muscle_cline = MuscleCommandline(args.muscle_binary, input = inputfile, out = outputfile, quiet = True) #add 'stable = True' to the end of this list, if the stable-bug in muscle is fixed (remove the correct_for_muscle_bug() method in that case)
 		muscle_cline()
 		mp_output.put(outputfile)
 
