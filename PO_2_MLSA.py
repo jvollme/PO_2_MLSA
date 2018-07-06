@@ -23,11 +23,9 @@ myparser.add_argument("-kt", "--keep_temp", action = "store_true", dest = "keep_
 myparser.add_argument("-am", "--align_method", action = "store", dest = "alignmeth", choices = ["muscle", "clustalw", "clustalw2", "clustalo"], default = "muscle", help = "The Alignmentmethod to use.\nDefault = 'muscle'")
 myparser.add_argument("-ap", "--aligner_path", action = "store", dest = "aligner_path", default = "", help = "(OPTIONAL: set path to the aligner of choice IF not included in global PATH variable")
 #myparser.add_argument("-dg", "--degap", action = "store", dest = "degap", choices = ["none", "all", "flanking"], default = "all", help = "(Only meant for use, if gblocks is not installed\nSpecify if and which gaps to remove:\n\t'none' keep all gapped positions in the final MLSA-alignment\n\t'all' remove ALL gapped postitions in the alignments\n\t'flanking' remove flanking gapped positions from all individual alignments\nDefault = 'all'")
-#myparser.add_argument("-F", "--filter", action = "store", dest = "afilter", choices = ["none", "degap_all", "degap_flanking", "gblocks"], default = "gblocks", help = "Specify if and how alignments should be filtered:\n\t'none' do not filter alignments (keep all gapped positions)\n\t'degap_all' remove ALL gapped postitions in the alignments (use only if gblock is not available)\n\t'degap_flanking' remove flanking gapped positions from all individual alignments (use only if gblocks is not available)\n'gblocks' use gblocks with default settings to degap and filter alignments (Default)")
 myparser.add_argument("-s", "--silent", action = "store_true", dest = "no_verbose", help = "non-verbose mode")
 myparser.add_argument("-t", "--threads", action = "store", dest = "nthreads", type = int, default = 1, help = "Maximum number of threads to use for alignment steps\nDefault = 1")
-#myparser.add_argument("-gb", "--gblocks", action = "store", dest = "gblocks", choices = ["n", "no", "f", "false", "y", "yes", "t", "true"], default = "true", help = "calls gblocks (if installed) to remove gapped positions and poorly aligned regions\n(Overrides '-dg'|'--degap'\nchoices:\n\t[n|no|f|false]: will NOT use gblocks\n\t[y|yes|t|true]: WILL use gblocks\nDefault = true (WILL use gblocks)")
-myparser.add_argument("-gbp", "--gblocks_path", action = "store", dest = "gblocks_path", default = "", help = "(OPTIONAL: set path to gblocks IF not included in global PATH variable)")
+myparser.add_argument("-gbp", "--gblocks_path", action = "store", dest = "gblocks_path", default = "Gblocks", help = "(OPTIONAL: explicitely specify which executable binary to use as \"Gblocks\" (INCLUDING the path to the binary)). Default: \"Gblocks\" (assumed to be in PATH)")
 myparser.add_argument("-op", "--out_path", action = "store", dest = "out_path", default = ".", help = "Path to output (will be created if it does not exist)\nDefault = current working directory")
 myparser.add_argument("-mt", "--make_tree", action = "store", dest = "tree_method", choices = ["raxml", "raxml_bs", "raxml_rapidbs", "nj", "nj_bs", "none"], default = "none", help = "Generate ML phylogenetic trees using RAxML with the substitution model \"PROTGAMMAAUTO\"\n\tchoices:\t\"raxml\": single tree without bootstraps (using new rapid hill climbing)\n\t\traxml_bs: thorough bootstrap analyses and search for best ML tree\n\t\traxml_rapidbs: rapid bootstrap analyses and search for best ML tree in one run\n\t\tnone\nDefault = none")
 myparser.add_argument("-tbp", "--tree_builder_path", action = "store", dest = "treebuilder_path", default = "", help = "Path to treebuilder (currently only raxml supported) if not listed in $PATH")
@@ -49,7 +47,7 @@ args = myparser.parse_args()
 
 #TOdo: add option "return_selection" to store selection of MLSA genes as unagligned multifastas or only lists of fasta-headers
 
-version = "v1.5"
+version = "v1.5.1"
 available_cores = multiprocessing.cpu_count() #counts how many cores are available, to check if the user-argument for threads can be fulfilled
 aln_length, proc_aln_length, OG_number = 0, 0, 0
 wstrings, estrings, lstrings = [], [], [] #warning, error and log messages respectively
@@ -64,7 +62,7 @@ docontinue = True
 gblocks = True
 #if args.afilter != "gblocks":
 #	gblocks = False
-gblocks_path = args.gblocks_path
+#gblocks_path = args.gblocks_path
 erroroccured, warningoccured = False, False
 hline = "-" * 50
 if args.subst_model in ["identity", "blosum", "pam"]:
@@ -133,14 +131,14 @@ def checkargs():
 	if args.temp_path != "" and docontinue:
 		if not os.path.exists(args.temp_path) or not os.path.isdir(args.temp_path):
 			if verbose:
-				print "Creating directory for temporary and intermediate result files: %s" % args.temp_path
+				mylogger.info("Creating directory for temporary and intermediate result files: %s" % args.temp_path)
 			os.mkdir(args.temp_path)
 		mylogger.info("-Will store temporary and intermediate result files in %s" % os.path.abspath(args.temp_path))
 		
 	if args.out_path != "" and docontinue:
 		if not os.path.exists(args.out_path) or not os.path.isdir(args.out_path):
 			if verbose:
-				print "Creating directory for final result files: %s" % args.out_path
+				mylogger.info("Creating directory for final result files: %s" % args.out_path)
 			os.mkdir(args.out_path)
 		mylogger.info("-Will store final result files in %s" % os.path.abspath(args.out_path))
 		
@@ -150,12 +148,16 @@ def checkargs():
 		if int(clustalo_version[0]) < 1 or (int(clustalo_version[0]) == 1 and int(clustalo_version[1]) < 2) : #only accept versions 1.2 and newer
 			raise OSError("found clustalo version is v%s ! Version 1.2 or higher is required!" % ".".join(clustalo_version))
 			
-	if gblocks_path == "":
-		test_gblocks = which("gblocks")
+	if args.gblocks_path == "Gblocks":
+		for gblock_name in ["Gblocks", "gblocks"]: #apparently gblocks can be named in lower OR upper case on some systems
+			test_gblocks = which(gblock_name)
+			if test_gblocks != None:
+				args.gblocks = test_gblocks
+				break
 		if test_gblocks == None:
 			raise OSError("can't locate gblocks in any path in PATH variable. please provide a Path to gblocks using the '-gbp' agrument, or choose a different filtering option ('-F')")
 		elif verbose:
-			print "Located gblocks executable: %s" % test_gblocks
+			mylogger.info("Located gblocks executable: %s" % test_gblocks)
 	else:
 		if os.path.exists(gblocks_path) and os.path.isdir(gblocks_path):
 			if os.path.exists(os.path.join(gblocks_path, "gblocks")) and os.path.isfile(os.path.join(gblocks_path, "gblocks")):
@@ -163,7 +165,7 @@ def checkargs():
 					print "Located gblocks executable: %s" % os.path.join(gblocks_path, "gblocks")
 		elif gblocks_path.endswith("gblocks") and os.path.isfile(gblocks_path):
 			if verbose:
-				print "Located gblocks executable: %s" % gblocks_path
+				mylogger.info("Located gblocks executable: %s" % gblocks_path)
 		else:
 			raise OSError("gblocks executable could not be found in the specified path: %s" % gblocks_path)
 			
