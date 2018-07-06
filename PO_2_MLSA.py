@@ -35,13 +35,11 @@ myparser.add_argument("-bs", "--bootstraps", action = "store", dest = "nr_bootst
 myparser.add_argument("-v", "--version", action = "store_true", dest = "showversion", default = False, help = "show version information and then quit (don't run complete script)")
 myparser.add_argument("--debug", action = "store_true", dest = "debug", default = False, help = "Log extra info for debugging")
 myparser.add_argument("--nj_substmodel", action = "store", dest = "subst_model",\
- choices = ['identity', 'blosum', 'pam','benner6', 'benner22', 'benner74', 'blosum100',\
- 'blosum30', 'blosum35', 'blosum40', 'blosum45', 'blosum50', 'blosum55', 'blosum60',\
- 'blosum62', 'blosum65', 'blosum70', 'blosum75', 'blosum80', 'blosum85', 'blosum90',\
- 'blosum95', 'feng', 'fitch', 'genetic', 'gonnet', 'grant', 'ident', 'johnson', 'levin',\
- 'mclach', 'miyata', 'nwsgappep', 'pam120', 'pam180', 'pam250', 'pam30', 'pam300',\
- 'pam60', 'pam90', 'rao', 'risler', 'structure'],\
-  default = "ident", help = "Substitution model for distance matrix calculation. All models listed in Bio.Phylo.TreeConstruction.DistanceCalculator.protein_models are available. default settings:\n\t\"identity\"\n\t\"blosum\" = blosum62\n\t\"pam\" = pam120")
+ choices = ['identity', "ident", 'blosum', 'pam',\
+ 'blosum30', 'blosum35', 'blosum40', 'blosum45', 'blosum50', 'blosum55', 'blosum60','blosum62',\
+ 'blosum65', 'blosum70', 'blosum75', 'blosum80', 'blosum85', 'blosum90', 'blosum95', 'blosum100',\
+ 'pam30','pam60', 'pam90', 'pam120', 'pam180', 'pam250',  'pam300'],\
+  default = "ident", help = "Substitution model for distance matrix calculation. Only \"identity\" and variances of \"blosum\" and \"pam\" are offered. abbreviations:\n\t\"identity\"\n\t\"blosum\" = blosum62\n\t\"pam\" = pam120, default = \"identity\"")
 #myparser.add_argument("--existing_align", action = "store", dest = existing_align, default = None, help = "contignue calculation from existing concatenated (and filtered!) alignment generated with PO_2_MLSA.py
 args = myparser.parse_args()
 
