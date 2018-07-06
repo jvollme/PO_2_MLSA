@@ -13,34 +13,43 @@ from Bio.Phylo.TreeConstruction import DistanceTreeConstructor
 import numpy
 
 #TODO: add parameters for gblocks
-
+#base options
 myparser=argparse.ArgumentParser(description="\n==PO_2_MLSA.py v1.5 by John Vollmers==\nCreates concatenated alignments of UNIQUE Genes with orthologues in comparison organisms for the construction of MLSA-based phylogenetic trees.\nOptionally the resulting concatenated alignments may contain all gapped alignmentpositions or may be stripped either of ALL gapped positions or of all gapped positions in the flanking regions of each composite ortholog\nThis script is supposed to be part of a pipeline consisting of:\n\tA.)Conversion of Genbank/Embl-Files to ANNOTATED(!) Fastas using CDS_extractor.pl by Andreas Leimbach\n\tB.)Calculation of orthologs and paralogs using proteinortho5 (WITH the '-single' and '-self' arguments!)\n\tC.)The creation of concatenated MLSA-sequences based on:\n\t\t-the fasta sequences of step A\n\t\t-the proteinortho5-results from step B\n\nThe output-file will be in fasta format (but including gapped positions, so remember to use 'fasta_wgap' when loading into Arb!). However it's absolutely no problem to include other common output-alignmentformats on request!", formatter_class=argparse.RawTextHelpFormatter)
 myparser.add_argument("-po", "--proteinortho", action = "store", dest = "PO_file", help = "(String) file with proteinortho5 results", required = True)
 myparser.add_argument("-f", "--fastas", action = "store", dest = "fasta_path", help = "(String) path to fasta files (produced by CDS_extractor) \nDefault = current working directory", default = "")
+myparser.add_argument("-t", "--threads", action = "store", dest = "nthreads", type = int, default = 1, help = "Maximum number of threads to use for alignment steps\nDefault = 1")
 myparser.add_argument("--filter", action = "store_true", dest = "filter_outliers", default = False, help = "OPTIONAL: Filter outliers based on single marker phylogenies in order to remove HGT events (Default: False)")
+
+#output-options
+myparser.add_argument("-op", "--out_path", action = "store", dest = "out_path", default = ".", help = "Path to output (will be created if it does not exist)\nDefault = current working directory")
 myparser.add_argument("-tp", "--temp_path", action = "store", dest = "temp_path", default = "", help = "Path for temporary files (will be created if does not exist)\nDefault =  current working directory")
 myparser.add_argument("-kt", "--keep_temp", action = "store_true", dest = "keep_temp", default = False, help = "Keep all temporary files and intermediate results\n(Multifasta_files containing the singe genes involved in the MLSA-alignments are stored in any case)\nDefault: delete all temporary files")
 #myparser.add_argument("-am", "--align_method", action = "store", dest = "alignmeth", choices = ["muscle", "clustalw", "clustalw2", "clustalo"], default = "muscle", help = "The Alignmentmethod to use.\nDefault = 'muscle'")
-myparser.add_argument("-mb", "--muscle_binary", action = "store", dest = "muscle_binary", default = "muscle", help = "Muscle binary to use (including path if not in $PATH). default: assume \"muscle\" in $PATH")
 #myparser.add_argument("-dg", "--degap", action = "store", dest = "degap", choices = ["none", "all", "flanking"], default = "all", help = "(Only meant for use, if gblocks is not installed\nSpecify if and which gaps to remove:\n\t'none' keep all gapped positions in the final MLSA-alignment\n\t'all' remove ALL gapped postitions in the alignments\n\t'flanking' remove flanking gapped positions from all individual alignments\nDefault = 'all'")
-myparser.add_argument("-s", "--silent", action = "store_true", dest = "no_verbose", help = "non-verbose mode")
-myparser.add_argument("-t", "--threads", action = "store", dest = "nthreads", type = int, default = 1, help = "Maximum number of threads to use for alignment steps\nDefault = 1")
+
+#external binary options
+myparser.add_argument("-mb", "--muscle_binary", action = "store", dest = "muscle_binary", default = "muscle", help = "Muscle binary to use (including path if not in $PATH). default: assume \"muscle\" in $PATH")
 myparser.add_argument("-gbb", "--gblocks", action = "store", dest = "gblocks_binary", default = "Gblocks", help = "Gblocks binaries to use (include path to binaries if not listed in $PATH). Default: \"Gblocks\" (assumed to be in PATH)")
-myparser.add_argument("-op", "--out_path", action = "store", dest = "out_path", default = ".", help = "Path to output (will be created if it does not exist)\nDefault = current working directory")
-myparser.add_argument("-mt", "--make_tree", action = "store", dest = "tree_method", choices = ["raxml", "raxml_rapidbs", "nj", "nj_bs", "none"], default = "none", help = "Generate ML phylogenetic trees using RAxML with the substitution model \"PROTGAMMAAUTO\"\n\tchoices:\t\"raxml\": single tree without bootstraps (using new rapid hill climbing)\n\t\traxml_rapidbs: rapid bootstrap analyses and search for best ML tree in one run\n\t\tnone\nDefault = none")
 myparser.add_argument("-rmlb", "--raxml", action = "store", dest = "raxml_binary", default = "", help = "RaxML excecutable biaries to use (Include path to binary if not listed in $PATH). Default: check for common naming of raxml binaries in $PATH, prioritizing binaries with \"PTHREADS\" in the name")
+
+#tree-calculation options
+myparser.add_argument("-mt", "--make_tree", action = "store", dest = "tree_method", choices = ["raxml", "raxml_rapidbs", "nj", "nj_bs", "none"], default = "none", help = "Generate ML phylogenetic trees using RAxML with the substitution model \"PROTGAMMAAUTO\"\n\tchoices:\t\"raxml\": single tree without bootstraps (using new rapid hill climbing)\n\t\traxml_rapidbs: rapid bootstrap analyses and search for best ML tree in one run\n\t\tnone\nDefault = none")
 myparser.add_argument("-sd", "--seed", action = "store", dest = "seed_nr", type = int, default = 0, help = "Integer to provide as seed for RAxML\n0 = seed generated randomly\nDefault = random seed")
 myparser.add_argument("-bs", "--bootstraps", action = "store", dest = "nr_bootstraps", type = int, default = 1000, help = "Number of bootstraps(if any)\ndefault = 1000")
 #myparser.add_argument("-ctba", "--custom_tree_builder_args", action = "store", dest = "custom_tree_builder_args", default = None, help = "custom arguments for raxml. CAUTION: will overide Only use if you know EXACTLY what you are doing!")
-myparser.add_argument("-v", "--version", action = "store_true", dest = "showversion", default = False, help = "show version information and then quit (don't run complete script)")
-myparser.add_argument("--debug", action = "store_true", dest = "debug", default = False, help = "Log extra info for debugging")
 myparser.add_argument("--nj_substmodel", action = "store", dest = "subst_model",\
  choices = ['identity', "ident", 'blosum', 'pam',\
  'blosum30', 'blosum35', 'blosum40', 'blosum45', 'blosum50', 'blosum55', 'blosum60','blosum62',\
  'blosum65', 'blosum70', 'blosum75', 'blosum80', 'blosum85', 'blosum90', 'blosum95', 'blosum100',\
  'pam30','pam60', 'pam90', 'pam120', 'pam180', 'pam250',  'pam300'],\
   default = "ident", help = "Substitution model for distance matrix calculation. Only \"identity\" and variances of \"blosum\" and \"pam\" are offered. abbreviations:\n\t\"identity\"\n\t\"blosum\" = blosum62\n\t\"pam\" = pam120, default = \"identity\"")
+
+#other options
+myparser.add_argument("-v", "--version", action = "store_true", dest = "showversion", default = False, help = "show version information and then quit (don't run complete script)")
+myparser.add_argument("-s", "--silent", action = "store_true", dest = "no_verbose", help = "non-verbose mode")
+myparser.add_argument("--debug", action = "store_true", dest = "debug", default = False, help = "Log extra info for debugging")
 #myparser.add_argument("--existing_align", action = "store", dest = existing_align, default = None, help = "contignue calculation from existing concatenated (and filtered!) alignment generated with PO_2_MLSA.py
+
 args = myparser.parse_args()
 
 #TOdo: add option "return_selection" to store selection of MLSA genes as unagligned multifastas or only lists of fasta-headers
