@@ -27,7 +27,7 @@ myparser.add_argument("-s", "--silent", action = "store_true", dest = "no_verbos
 myparser.add_argument("-t", "--threads", action = "store", dest = "nthreads", type = int, default = 1, help = "Maximum number of threads to use for alignment steps\nDefault = 1")
 myparser.add_argument("-gbb", "--gblocks", action = "store", dest = "gblocks_binary", default = "Gblocks", help = "Gblocks binaries to use (include path to binaries if not listed in $PATH). Default: \"Gblocks\" (assumed to be in PATH)")
 myparser.add_argument("-op", "--out_path", action = "store", dest = "out_path", default = ".", help = "Path to output (will be created if it does not exist)\nDefault = current working directory")
-myparser.add_argument("-mt", "--make_tree", action = "store", dest = "tree_method", choices = ["raxml", "raxml_bs", "raxml_rapidbs", "nj", "nj_bs", "none"], default = "none", help = "Generate ML phylogenetic trees using RAxML with the substitution model \"PROTGAMMAAUTO\"\n\tchoices:\t\"raxml\": single tree without bootstraps (using new rapid hill climbing)\n\t\traxml_bs: thorough bootstrap analyses and search for best ML tree\n\t\traxml_rapidbs: rapid bootstrap analyses and search for best ML tree in one run\n\t\tnone\nDefault = none")
+myparser.add_argument("-mt", "--make_tree", action = "store", dest = "tree_method", choices = ["raxml", "raxml_rapidbs", "nj", "nj_bs", "none"], default = "none", help = "Generate ML phylogenetic trees using RAxML with the substitution model \"PROTGAMMAAUTO\"\n\tchoices:\t\"raxml\": single tree without bootstraps (using new rapid hill climbing)\n\t\traxml_rapidbs: rapid bootstrap analyses and search for best ML tree in one run\n\t\tnone\nDefault = none")
 myparser.add_argument("-rmlb", "--raxml", action = "store", dest = "raxml_binary", default = "", help = "RaxML excecutable biaries to use (Include path to binary if not listed in $PATH). Default: check for common naming of raxml binaries in $PATH, prioritizing binaries with \"PTHREADS\" in the name")
 myparser.add_argument("-sd", "--seed", action = "store", dest = "seed_nr", type = int, default = 0, help = "Integer to provide as seed for RAxML\n0 = seed generated randomly\nDefault = random seed")
 myparser.add_argument("-bs", "--bootstraps", action = "store", dest = "nr_bootstraps", type = int, default = 1000, help = "Number of bootstraps(if any)\ndefault = 1000")
@@ -685,36 +685,6 @@ def raxml_rapidbs(alignmentfile): #parameters should be a dictionary (This dicti
 	outputfiles = ["RAxML_bipartitions." + outname, "RAxML_bipartitionsBranchLabels." + outname]
 	return outputfiles
 
-def raxml_bs(alignmentfile):
-	mylogger.debug("raxml_bs(%s)" % alignmentfile)
-	mylogger.info("Calculating phylogenies: Thorough bootstrap analyses with raxml")
-	mylogger.info("\tDetermining best ML tree of 20 raxmlHPC runs using %d threads" % args.nthreads)
-	
-	raxml_cline = RaxmlCommandline(raxml_prog, model = "PROTGAMMAAUTO", name = "best_delme_tempfile", parsimony_seed = args.seed_nr, num_replicates = 20, sequences = alignmentfile, threads = args.nthreads)
-	mylogger.info("\t-->" + str(raxml_cline))
-	raxml_cline()
-	#the resultfile will be :"RAxML_bestTree.best_delme_tempfile"
-	mylogger.info("\t-->SUCCESS")
-	
-	mylogger.info("\tDoing bootstrap analyses with %d runs using raxmlHPC using %d threads" %(args.nr_bootstraps, args.nthreads))
-	
-	raxml_cline = RaxmlCommandline(raxml_prog, model = "PROTGAMMAAUTO", sequences = alignmentfile, name = "boot_delme_tempfile", parsimony_seed = args.seed_nr, bootstrap_seed = args.seed_nr, num_replicates = args.nr_bootstraps, threads = args.nthreads)
-	mylogger.info("\t-->" + str(raxml_cline))
-	raxml_cline()
-	#the resultfile will be: "RAxML_bootstrap.boot_delme_tempfile"
-	mylogger.info("\t-->SUCCESS")
-	
-	mylogger.info("\tDrawing bipartitions of bootstrap trees onto best ML tree using raxmlHPC using " + str(args.nthreads) + " threads")
-	
-	outname = "MLSA_raxmlBS" + str(args.nr_bootstraps) + "_" + time.strftime("%Y%m%d%H%M%S") + "_" + "final_tree"
-	raxml_cline = RaxmlCommandline(raxml_prog, model = "PROTGAMMAAUTO", parsimony_seed = args.seed_nr, algorithm = "b", starting_tree = "RAxML_bestTree.best_delme_tempfile", bipartition_filename = "RAxML_bootstrap.boot_delme_tempfile", name = outname)
-	mylogger.info("\t-->" + str(raxml_cline))
-	raxml_cline()
-	
-	#The resultfiles will be: RAxML_bipartitions.final_tree" and "RAxML_bipartitionsBranchLabels.final_tree"
-	outputfiles = ["RAxML_bipartitions." + outname, "RAxML_bipartitionsBranchLabels." + outname]
-	mylogger.info("\t-->SUCCESS")
-	return outputfiles
 
 def raxml(alignmentfile):
 	mylogger.debug("raxml(%s)" % alignmentfile)
