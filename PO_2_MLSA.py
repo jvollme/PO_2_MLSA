@@ -25,10 +25,10 @@ myparser.add_argument("-ap", "--aligner_path", action = "store", dest = "aligner
 #myparser.add_argument("-dg", "--degap", action = "store", dest = "degap", choices = ["none", "all", "flanking"], default = "all", help = "(Only meant for use, if gblocks is not installed\nSpecify if and which gaps to remove:\n\t'none' keep all gapped positions in the final MLSA-alignment\n\t'all' remove ALL gapped postitions in the alignments\n\t'flanking' remove flanking gapped positions from all individual alignments\nDefault = 'all'")
 myparser.add_argument("-s", "--silent", action = "store_true", dest = "no_verbose", help = "non-verbose mode")
 myparser.add_argument("-t", "--threads", action = "store", dest = "nthreads", type = int, default = 1, help = "Maximum number of threads to use for alignment steps\nDefault = 1")
-myparser.add_argument("-gbp", "--gblocks_path", action = "store", dest = "gblocks_path", default = "Gblocks", help = "(OPTIONAL: explicitely specify which executable binary to use as \"Gblocks\" (INCLUDING the path to the binary)). Default: \"Gblocks\" (assumed to be in PATH)")
+myparser.add_argument("-gbp", "--gblocks_path", action = "store", dest = "gblocks_path", default = "Gblocks", help = "Gblocks binaries to use (include path to binaries if not listed in $PATH). Default: \"Gblocks\" (assumed to be in PATH)")
 myparser.add_argument("-op", "--out_path", action = "store", dest = "out_path", default = ".", help = "Path to output (will be created if it does not exist)\nDefault = current working directory")
 myparser.add_argument("-mt", "--make_tree", action = "store", dest = "tree_method", choices = ["raxml", "raxml_bs", "raxml_rapidbs", "nj", "nj_bs", "none"], default = "none", help = "Generate ML phylogenetic trees using RAxML with the substitution model \"PROTGAMMAAUTO\"\n\tchoices:\t\"raxml\": single tree without bootstraps (using new rapid hill climbing)\n\t\traxml_bs: thorough bootstrap analyses and search for best ML tree\n\t\traxml_rapidbs: rapid bootstrap analyses and search for best ML tree in one run\n\t\tnone\nDefault = none")
-myparser.add_argument("-tbp", "--tree_builder_path", action = "store", dest = "treebuilder_path", default = "", help = "Path to treebuilder (currently only raxml supported) if not listed in $PATH")
+myparser.add_argument("-rmlp", "--raxml_path", action = "store", dest = "raxml_path", default = "", help = "RaxML excecutable biaries to use (Include path to binary if not listed in $PATH). Default: check for common naming of raxml binaries in $PATH, prioritizing binaries with \"PTHREADS\" in the name")
 myparser.add_argument("-sd", "--seed", action = "store", dest = "seed_nr", type = int, default = 0, help = "Integer to provide as seed for RAxML\n0 = seed generated randomly\nDefault = random seed")
 myparser.add_argument("-bs", "--bootstraps", action = "store", dest = "nr_bootstraps", type = int, default = 1000, help = "Number of bootstraps(if any)\ndefault = 1000")
 #myparser.add_argument("-ctba", "--custom_tree_builder_args", action = "store", dest = "custom_tree_builder_args", default = None, help = "custom arguments for raxml. CAUTION: will overide Only use if you know ExACTLY what you are doing!")
@@ -171,7 +171,7 @@ def checkargs():
 			
 	if args.tree_method in ["raxml", "raxml_bs", "raxml_rapidbs"]:
 		#print "CHECKING raxml-binaries"
-		if args.treebuilder_path == "":
+		if args.raxml_path == "":
 			if which("raxmlHPC") == None and which("raxmlHPC-PTHREADS") == None and which("raxmlHPC-PTHREADS-SSE3") == None and which("raxmlHPC-SSE3") == None:
 				raise OSError("ERROR: No raxmlHPC binaries found in any directory within $PATH! please provide a PATH to raxml binaries!")
 				args.tree_method = "none"
@@ -200,9 +200,9 @@ def checkargs():
 						mylogger.warning("This script was devised for and tested with RAxML v8.0.20. Your version is v%s !\n\tThis may very well still work, but if it doesn't it's YOUR fault!" % ".".join(version))
 				except:
 					mylogger.warning("This script was devised for and tested with RAxML v8.0.20.\n\tNot sure which version of RAxML you're using, but it sure as hell isn't v7 or v8!\n\tThis may very well still work, but if it doesn't it's YOUR fault!")
-		elif os.path.exists(args.treebuilder_path) and os.path.isfile(args.treebuilder_path):
-			if args.nthreads > 1 and not "PTHREADS" in args.treebuilder_path:
-				mylogger.warning("multithreading is only supported with 'PTHREADS'-versions of raxml. Not sure if your choosen binaries support this.\t\nif raxml calculations fail, recombile raxml with 'PTHREADS'-option")
+		elif os.path.exists(args.raxml_path) and os.path.isfile(args.raxml_path):
+			if args.nthreads > 1 and not "PTHREADS" in args.raxml_path:
+				mylogger.warning("multithreading is only supported with 'PTHREADS'-versions of raxml. Not sure if your choosen binaries support this.\t\nif raxml calculations fail, recompile raxml with 'PTHREADS'-option")
 			try:
 				checkraxml_cline = RaxmlCommandline(version = True)
 				versiontext = checkraxml_cline()[0]
@@ -211,10 +211,10 @@ def checkargs():
 				version = versiontext[startv:startv+endv].split(".")
 				if int(version[0]) < 8 or (int(version[0]) == 8 and int(version[1]) == 0 and int(version[2]) < 20):
 						mylogger.warning("This script was devised for and tested with RAxML v8.0.20. Your version is v%s !\n\tThis may very well still work, but if it doesn't it's YOUR fault!" % ".".join(version))
-				raxml_prog = args.treebuilder_path
+				raxml_prog = args.raxml_path
 				
 			except:
-				mylogger.warning("Correct raxML-version not found under %s !\nWill NOT calculate ML trees!" % args.treebuilder_path)
+				mylogger.warning("Correct raxML-version not found under %s !\nWill NOT calculate ML trees!" % args.raxml_path)
 				args.tree_method = "none"
 
 def which(thisfile):
