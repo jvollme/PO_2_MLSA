@@ -11,52 +11,59 @@ from Bio.Phylo.Consensus import *
 from Bio.Phylo.TreeConstruction import DistanceCalculator
 from Bio.Phylo.TreeConstruction import DistanceTreeConstructor
 import numpy
+version = "v1.5.2"
 
 #TODO: add parameters for gblocks
-
-myparser=argparse.ArgumentParser(description="\n==PO_2_MLSA.py v1.5 by John Vollmers==\nCreates concatenated alignments of UNIQUE Genes with orthologues in comparison organisms for the construction of MLSA-based phylogenetic trees.\nOptionally the resulting concatenated alignments may contain all gapped alignmentpositions or may be stripped either of ALL gapped positions or of all gapped positions in the flanking regions of each composite ortholog\nThis script is supposed to be part of a pipeline consisting of:\n\tA.)Conversion of Genbank/Embl-Files to ANNOTATED(!) Fastas using CDS_extractor.pl by Andreas Leimbach\n\tB.)Calculation of orthologs and paralogs using proteinortho5 (WITH the '-single' and '-self' arguments!)\n\tC.)The creation of concatenated MLSA-sequences based on:\n\t\t-the fasta sequences of step A\n\t\t-the proteinortho5-results from step B\n\nThe output-file will be in fasta format (but including gapped positions, so remember to use 'fasta_wgap' when loading into Arb!). However it's absolutely no problem to include other common output-alignmentformats on request!", formatter_class=argparse.RawTextHelpFormatter)
+#base options
+myparser=argparse.ArgumentParser(description="\n==PO_2_MLSA.py {} by John Vollmers==\nCreates concatenated alignments of UNIQUE Genes with orthologues in comparison organisms for the construction of MLSA-based phylogenetic trees.\nOptionally the resulting concatenated alignments may contain all gapped alignmentpositions or may be stripped either of ALL gapped positions or of all gapped positions in the flanking regions of each composite ortholog\nThis script is supposed to be part of a pipeline consisting of:\n\tA.)Conversion of Genbank/Embl-Files to ANNOTATED(!) Fastas using CDS_extractor.pl by Andreas Leimbach\n\tB.)Calculation of orthologs and paralogs using proteinortho5 (WITH the '-single' and '-self' arguments!)\n\tC.)The creation of concatenated MLSA-sequences based on:\n\t\t-the fasta sequences of step A\n\t\t-the proteinortho5-results from step B\n\nThe output-file will be in fasta format (but including gapped positions, so remember to use 'fasta_wgap' when loading into Arb!). However it's absolutely no problem to include other common output-alignmentformats on request!".format(version), formatter_class=argparse.RawTextHelpFormatter)
 myparser.add_argument("-po", "--proteinortho", action = "store", dest = "PO_file", help = "(String) file with proteinortho5 results", required = True)
 myparser.add_argument("-f", "--fastas", action = "store", dest = "fasta_path", help = "(String) path to fasta files (produced by CDS_extractor) \nDefault = current working directory", default = "")
-myparser.add_argument("--filter", action = "store_true", dest = "filter_outliers", default = False, help = "Filter outliers based on single marker phylogenies in order to remove HGT events (Default: False)")
+myparser.add_argument("-t", "--threads", action = "store", dest = "nthreads", type = int, default = 1, help = "Maximum number of threads to use for alignment steps\nDefault = 1")
+myparser.add_argument("--filter", action = "store_true", dest = "filter_outliers", default = False, help = "OPTIONAL: Filter outliers based on single marker phylogenies in order to remove HGT events (Default: False)")
+
+#output-options
+myparser.add_argument("-op", "--out_path", action = "store", dest = "out_path", default = ".", help = "Path to output (will be created if it does not exist)\nDefault = current working directory")
 myparser.add_argument("-tp", "--temp_path", action = "store", dest = "temp_path", default = "", help = "Path for temporary files (will be created if does not exist)\nDefault =  current working directory")
 myparser.add_argument("-kt", "--keep_temp", action = "store_true", dest = "keep_temp", default = False, help = "Keep all temporary files and intermediate results\n(Multifasta_files containing the singe genes involved in the MLSA-alignments are stored in any case)\nDefault: delete all temporary files")
-myparser.add_argument("-am", "--align_method", action = "store", dest = "alignmeth", choices = ["muscle", "clustalw", "clustalw2", "clustalo"], default = "muscle", help = "The Alignmentmethod to use.\nDefault = 'muscle'")
-myparser.add_argument("-ap", "--aligner_path", action = "store", dest = "aligner_path", default = "", help = "(OPTIONAL: set path to the aligner of choice IF not included in global PATH variable")
+#myparser.add_argument("-am", "--align_method", action = "store", dest = "alignmeth", choices = ["muscle", "clustalw", "clustalw2", "clustalo"], default = "muscle", help = "The Alignmentmethod to use.\nDefault = 'muscle'")
 #myparser.add_argument("-dg", "--degap", action = "store", dest = "degap", choices = ["none", "all", "flanking"], default = "all", help = "(Only meant for use, if gblocks is not installed\nSpecify if and which gaps to remove:\n\t'none' keep all gapped positions in the final MLSA-alignment\n\t'all' remove ALL gapped postitions in the alignments\n\t'flanking' remove flanking gapped positions from all individual alignments\nDefault = 'all'")
-#myparser.add_argument("-F", "--filter", action = "store", dest = "afilter", choices = ["none", "degap_all", "degap_flanking", "gblocks"], default = "gblocks", help = "Specify if and how alignments should be filtered:\n\t'none' do not filter alignments (keep all gapped positions)\n\t'degap_all' remove ALL gapped postitions in the alignments (use only if gblock is not available)\n\t'degap_flanking' remove flanking gapped positions from all individual alignments (use only if gblocks is not available)\n'gblocks' use gblocks with default settings to degap and filter alignments (Default)")
-myparser.add_argument("-s", "--silent", action = "store_true", dest = "no_verbose", help = "non-verbose mode")
-myparser.add_argument("-t", "--threads", action = "store", dest = "nthreads", type = int, default = 1, help = "Maximum number of threads to use for alignment steps\nDefault = 1")
-#myparser.add_argument("-gb", "--gblocks", action = "store", dest = "gblocks", choices = ["n", "no", "f", "false", "y", "yes", "t", "true"], default = "true", help = "calls gblocks (if installed) to remove gapped positions and poorly aligned regions\n(Overrides '-dg'|'--degap'\nchoices:\n\t[n|no|f|false]: will NOT use gblocks\n\t[y|yes|t|true]: WILL use gblocks\nDefault = true (WILL use gblocks)")
-myparser.add_argument("-gbp", "--gblocks_path", action = "store", dest = "gblocks_path", default = "", help = "(OPTIONAL: set path to gblocks IF not included in global PATH variable)")
-myparser.add_argument("-op", "--out_path", action = "store", dest = "out_path", default = ".", help = "Path to output (will be created if it does not exist)\nDefault = current working directory")
-myparser.add_argument("-mt", "--make_tree", action = "store", dest = "tree_method", choices = ["raxml", "raxml_bs", "raxml_rapidbs", "nj", "nj_bs", "none"], default = "none", help = "Generate ML phylogenetic trees using RAxML with the substitution model \"PROTGAMMAAUTO\"\n\tchoices:\t\"raxml\": single tree without bootstraps (using new rapid hill climbing)\n\t\traxml_bs: thorough bootstrap analyses and search for best ML tree\n\t\traxml_rapidbs: rapid bootstrap analyses and search for best ML tree in one run\n\t\tnone\nDefault = none")
-myparser.add_argument("-tbp", "--tree_builder_path", action = "store", dest = "treebuilder_path", default = "", help = "Path to treebuilder (currently only raxml supported) if not listed in $PATH")
+
+#external binary options
+myparser.add_argument("-mb", "--muscle_binary", action = "store", dest = "muscle_binary", default = "muscle", help = "Muscle binary to use (including path if not in $PATH). default: assume \"muscle\" in $PATH")
+myparser.add_argument("-gbb", "--gblocks", action = "store", dest = "gblocks_binary", default = "Gblocks", help = "Gblocks binaries to use (include path to binaries if not listed in $PATH). Default: \"Gblocks\" (assumed to be in PATH)")
+myparser.add_argument("-rmlb", "--raxml", action = "store", dest = "raxml_binary", default = "", help = "RaxML excecutable biaries to use (Include path to binary if not listed in $PATH). Default: check for common naming of raxml binaries in $PATH, prioritizing binaries with \"PTHREADS\" in the name")
+
+#tree-calculation options
+myparser.add_argument("-mt", "--make_tree", action = "store", dest = "tree_method", choices = ["raxml", "raxml_rapidbs", "nj", "nj_bs", "none"], default = "none", help = "Generate ML phylogenetic trees using RAxML with the substitution model \"PROTGAMMAAUTO\"\n\tchoices:\t\"raxml\": single tree without bootstraps (using new rapid hill climbing)\n\t\traxml_rapidbs: rapid bootstrap analyses and search for best ML tree in one run\n\t\tnone\nDefault = none")
 myparser.add_argument("-sd", "--seed", action = "store", dest = "seed_nr", type = int, default = 0, help = "Integer to provide as seed for RAxML\n0 = seed generated randomly\nDefault = random seed")
 myparser.add_argument("-bs", "--bootstraps", action = "store", dest = "nr_bootstraps", type = int, default = 1000, help = "Number of bootstraps(if any)\ndefault = 1000")
-#myparser.add_argument("-ctba", "--custom_tree_builder_args", action = "store", dest = "custom_tree_builder_args", default = None, help = "custom arguments for raxml. CAUTION: will overide Only use if you know ExACTLY what you are doing!")
-myparser.add_argument("-v", "--version", action = "store_true", dest = "showversion", default = False, help = "show version information and then quit (don't run complete script)")
-myparser.add_argument("--debug", action = "store_true", dest = "debug", default = False, help = "Log extra info for debugging")
+#myparser.add_argument("-ctba", "--custom_tree_builder_args", action = "store", dest = "custom_tree_builder_args", default = None, help = "custom arguments for raxml. CAUTION: will overide Only use if you know EXACTLY what you are doing!")
 myparser.add_argument("--nj_substmodel", action = "store", dest = "subst_model",\
- choices = ['identity', 'blosum', 'pam','benner6', 'benner22', 'benner74', 'blosum100',\
- 'blosum30', 'blosum35', 'blosum40', 'blosum45', 'blosum50', 'blosum55', 'blosum60',\
- 'blosum62', 'blosum65', 'blosum70', 'blosum75', 'blosum80', 'blosum85', 'blosum90',\
- 'blosum95', 'feng', 'fitch', 'genetic', 'gonnet', 'grant', 'ident', 'johnson', 'levin',\
- 'mclach', 'miyata', 'nwsgappep', 'pam120', 'pam180', 'pam250', 'pam30', 'pam300',\
- 'pam60', 'pam90', 'rao', 'risler', 'structure'],\
-  default = "ident", help = "Substitution model for distance matrix calculation. All models listed in Bio.Phylo.TreeConstruction.DistanceCalculator.protein_models are available. default settings:\n\t\"identity\"\n\t\"blosum\" = blosum62\n\t\"pam\" = pam120")
+ choices = ['identity', "ident", 'blosum', 'pam',\
+ 'blosum30', 'blosum35', 'blosum40', 'blosum45', 'blosum50', 'blosum55', 'blosum60','blosum62',\
+ 'blosum65', 'blosum70', 'blosum75', 'blosum80', 'blosum85', 'blosum90', 'blosum95', 'blosum100',\
+ 'pam30','pam60', 'pam90', 'pam120', 'pam180', 'pam250',  'pam300'],\
+  default = "ident", help = "Substitution model for distance matrix calculation. Only \"identity\" and variances of \"blosum\" and \"pam\" are offered. abbreviations:\n\t\"identity\"\n\t\"blosum\" = blosum62\n\t\"pam\" = pam120, default = \"identity\"")
+
+#other options
+myparser.add_argument("-v", "--version", action = "store_true", dest = "showversion", default = False, help = "show version information and then quit (don't run complete script)")
+myparser.add_argument("-s", "--silent", action = "store_true", dest = "no_verbose", help = "non-verbose mode")
+myparser.add_argument("--debug", action = "store_true", dest = "debug", default = False, help = "Log extra info for debugging")
 #myparser.add_argument("--existing_align", action = "store", dest = existing_align, default = None, help = "contignue calculation from existing concatenated (and filtered!) alignment generated with PO_2_MLSA.py
+
 args = myparser.parse_args()
 
 #TOdo: add option "return_selection" to store selection of MLSA genes as unagligned multifastas or only lists of fasta-headers
 
-version = "v1.5"
+
 available_cores = multiprocessing.cpu_count() #counts how many cores are available, to check if the user-argument for threads can be fulfilled
 aln_length, proc_aln_length, OG_number = 0, 0, 0
 wstrings, estrings, lstrings = [], [], [] #warning, error and log messages respectively
+alignmeth = "muscle"
 
 if not os.path.exists(args.out_path):
 	os.makedirs(args.out_path)
-outputfilename = os.path.join(args.out_path, "concatenated_orthologs_%s_%s.fasta" %(args.alignmeth, os.path.basename(args.PO_file)))
+outputfilename = os.path.join(args.out_path, "concatenated_orthologs_%s_%s.fasta" %(alignmeth, os.path.basename(args.PO_file)))
 logfilename = os.path.join(args.out_path, "PO_2_MLSA_%s.log" % time.strftime("%Y%m%d%H%M%S"))
 raxml_prog = "raxmlHPC"
 verbose = True
@@ -64,7 +71,7 @@ docontinue = True
 gblocks = True
 #if args.afilter != "gblocks":
 #	gblocks = False
-gblocks_path = args.gblocks_path
+#gblocks_binary = args.gblocks_binary
 erroroccured, warningoccured = False, False
 hline = "-" * 50
 if args.subst_model in ["identity", "blosum", "pam"]:
@@ -116,16 +123,17 @@ def checkargs():
 	if args.fasta_path != "" and (not os.path.exists(args.fasta_path) or not os.path.isdir(args.fasta_path)):
 		raise OSError("fasta_path: '%s' does not exist or is no directory!" % args.fasta_path)
 		
-	if args.aligner_path != "":
-		if os.path.exists(args.aligner_path) and os.path.isdir(args.aligner_path):
-			if not os.path.exists(os.path.join(args.aligner_path, args.alignmeth)):
-				raise OSError("can't find '%s' at %s" %(args.alignmeth, args.aligner_path))
-		else:
-			raise OSError("aligner_path: '%s' does not exist or is not a directory!" % args.aligner_path)
-	elif args.aligner_path == "":
-		test_aligner = which(args.alignmeth)
+	if args.muscle_binary != "muscle":
+		if os.path.exists(args.muscle_binary) and os.path.isdir(args.muscle_binary):
+			raise OSError("{} was specified as binary for muscle-aligner, but is actually a directory".format(args.muscle_binary))
+		elif not os.path.exists(args.muscle_binary):
+				raise OSError("muscle binary \"{}\" does not exist".format(args.muscle_binary))
+		elif os.path.exists(args.muscle_binary) and os.path.isfile(args.muscle_binary):
+			mylogger.info("using \"{}\" for alignments".format(args.muscle_binary))
+	elif args.muscle_binary == "muscle":
+		test_aligner = which(alignmeth)
 		if test_aligner == None:
-			raise OSError("Can't find %s in any directory in the PATH variable. Please provide a path" % args.alignmeth)
+			raise OSError("Can't find \"%s\" in any directory in the PATH variable. Please provide the complete path to the binary" % alignmeth)
 			
 	if not os.path.exists(args.PO_file) or not os.path.isfile(args.PO_file):
 		raise OSError("cannot find proteinortho-resultfile: %s" % args.PO_file)
@@ -133,43 +141,45 @@ def checkargs():
 	if args.temp_path != "" and docontinue:
 		if not os.path.exists(args.temp_path) or not os.path.isdir(args.temp_path):
 			if verbose:
-				print "Creating directory for temporary and intermediate result files: %s" % args.temp_path
+				mylogger.info("Creating directory for temporary and intermediate result files: %s" % args.temp_path)
 			os.mkdir(args.temp_path)
 		mylogger.info("-Will store temporary and intermediate result files in %s" % os.path.abspath(args.temp_path))
 		
 	if args.out_path != "" and docontinue:
 		if not os.path.exists(args.out_path) or not os.path.isdir(args.out_path):
 			if verbose:
-				print "Creating directory for final result files: %s" % args.out_path
+				mylogger.info("Creating directory for final result files: %s" % args.out_path)
 			os.mkdir(args.out_path)
 		mylogger.info("-Will store final result files in %s" % os.path.abspath(args.out_path))
 		
-	if args.alignmeth == "clustalo" and docontinue: #check clustalo version
+	if alignmeth == "clustalo" and docontinue: #check clustalo version
 		clustalomega_cline = ClustalOmegaCommandline("clustalo", version = True)
 		clustalo_version = clustalomega_cline()[0].rstrip().split(".")
 		if int(clustalo_version[0]) < 1 or (int(clustalo_version[0]) == 1 and int(clustalo_version[1]) < 2) : #only accept versions 1.2 and newer
 			raise OSError("found clustalo version is v%s ! Version 1.2 or higher is required!" % ".".join(clustalo_version))
 			
-	if gblocks_path == "":
-		test_gblocks = which("gblocks")
+	if args.gblocks_binary in ["Gblocks", "gblocks"]:
+		for gblock_name in ["Gblocks", "gblocks"]: #apparently gblocks can be named in lower OR upper case on some systems
+			test_gblocks = which(gblock_name)
+			if test_gblocks != None:
+				args.gblocks = test_gblocks
+				break
 		if test_gblocks == None:
 			raise OSError("can't locate gblocks in any path in PATH variable. please provide a Path to gblocks using the '-gbp' agrument, or choose a different filtering option ('-F')")
 		elif verbose:
-			print "Located gblocks executable: %s" % test_gblocks
+			mylogger.info("Located gblocks executable: %s" % test_gblocks)
 	else:
-		if os.path.exists(gblocks_path) and os.path.isdir(gblocks_path):
-			if os.path.exists(os.path.join(gblocks_path, "gblocks")) and os.path.isfile(os.path.join(gblocks_path, "gblocks")):
-				if verbose:
-					print "Located gblocks executable: %s" % os.path.join(gblocks_path, "gblocks")
-		elif gblocks_path.endswith("gblocks") and os.path.isfile(gblocks_path):
+		if os.path.exists(args.gblocks_binary) and os.path.isfile(args.gblocks_binary):
 			if verbose:
-				print "Located gblocks executable: %s" % gblocks_path
+				print "Located gblocks executable: %s" % os.path.join(args.gblocks_binary, "gblocks")
+		elif os.path.isdir(args.gblocks_binary):
+			raise OSError("\"{}\" specified as Gblocks binary, But it is a directory not a binary!".format(args.gblocks_binary))
 		else:
-			raise OSError("gblocks executable could not be found in the specified path: %s" % gblocks_path)
+			raise OSError("the specified gblocks executable \"{}\" does not exist!".format(args.gblocks_binary))
 			
-	if args.tree_method != "none":
+	if args.tree_method in ["raxml", "raxml_bs", "raxml_rapidbs"]:
 		#print "CHECKING raxml-binaries"
-		if args.treebuilder_path == "":
+		if args.raxml_binary == "":
 			if which("raxmlHPC") == None and which("raxmlHPC-PTHREADS") == None and which("raxmlHPC-PTHREADS-SSE3") == None and which("raxmlHPC-SSE3") == None:
 				raise OSError("ERROR: No raxmlHPC binaries found in any directory within $PATH! please provide a PATH to raxml binaries!")
 				args.tree_method = "none"
@@ -198,9 +208,9 @@ def checkargs():
 						mylogger.warning("This script was devised for and tested with RAxML v8.0.20. Your version is v%s !\n\tThis may very well still work, but if it doesn't it's YOUR fault!" % ".".join(version))
 				except:
 					mylogger.warning("This script was devised for and tested with RAxML v8.0.20.\n\tNot sure which version of RAxML you're using, but it sure as hell isn't v7 or v8!\n\tThis may very well still work, but if it doesn't it's YOUR fault!")
-		elif os.path.exists(args.treebuilder_path) and os.path.isfile(args.treebuilder_path):
-			if args.nthreads > 1 and not "PTHREADS" in args.treebuilder_path:
-				mylogger.warning("multithreading is only supported with 'PTHREADS'-versions of raxml. Not sure if your choosen binaries support this.\t\nif raxml calculations fail, recombile raxml with 'PTHREADS'-option")
+		elif os.path.exists(args.raxml_binary) and os.path.isfile(args.raxml_binary):
+			if args.nthreads > 1 and not "PTHREADS" in args.raxml_binary:
+				mylogger.warning("multithreading is only supported with 'PTHREADS'-versions of raxml. Not sure if your choosen binaries support this.\t\nif raxml calculations fail, recompile raxml with 'PTHREADS'-option")
 			try:
 				checkraxml_cline = RaxmlCommandline(version = True)
 				versiontext = checkraxml_cline()[0]
@@ -209,10 +219,10 @@ def checkargs():
 				version = versiontext[startv:startv+endv].split(".")
 				if int(version[0]) < 8 or (int(version[0]) == 8 and int(version[1]) == 0 and int(version[2]) < 20):
 						mylogger.warning("This script was devised for and tested with RAxML v8.0.20. Your version is v%s !\n\tThis may very well still work, but if it doesn't it's YOUR fault!" % ".".join(version))
-				raxml_prog = args.treebuilder_path
+				raxml_prog = args.raxml_binary
 				
 			except:
-				mylogger.warning("Correct raxML-version not found under %s !\nWill NOT calculate ML trees!" % args.treebuilder_path)
+				mylogger.warning("Correct raxML-version not found under %s !\nWill NOT calculate ML trees!" % args.raxml_binary)
 				args.tree_method = "none"
 
 def which(thisfile):
@@ -331,8 +341,8 @@ def write_temp_files(record_dict, MLSA_list, prefix):
 	return unaligned_filelist
 
 def make_alignments(unaligned_filelist): 
-	mylogger.debug("run_multiprocess_alignment(%s, unaligned_filelist)" % args.alignmeth)
-	mylogger.info("\n%s\nAligning Orthologeous Groups (OGs) using %s and %d cpus" %(hline, args.alignmeth, args.nthreads))
+	mylogger.debug("run_multiprocess_alignment(%s, unaligned_filelist)" % alignmeth)
+	mylogger.info("\n%s\nAligning Orthologeous Groups (OGs) using %s and %d cpus" %(hline, alignmeth, args.nthreads))
 	full_thread_mp_groups = len(unaligned_filelist) // args.nthreads
 	remaining_mp_group_threads = len(unaligned_filelist) % args.nthreads
 	aligned_filelist = []
@@ -340,17 +350,17 @@ def make_alignments(unaligned_filelist):
 	
 	for mp_group in range(full_thread_mp_groups):
 		endindex = startindex + args.nthreads
-		mylogger.debug("aligned_filelist.extend(run_multiprocess_alignment(%s, unaligned_filelist[%d:%d]))" %(args.alignmeth, startindex, endindex))
-		aligned_filelist.extend(run_multiprocess_alignment(args.alignmeth, unaligned_filelist[startindex:endindex]))
-		sys.stdout.write("\raligned %d of %d OGs using %s" %(endindex, len(unaligned_filelist), args.alignmeth))
+		mylogger.debug("aligned_filelist.extend(run_multiprocess_alignment(%s, unaligned_filelist[%d:%d]))" %(alignmeth, startindex, endindex))
+		aligned_filelist.extend(run_multiprocess_alignment(alignmeth, unaligned_filelist[startindex:endindex]))
+		sys.stdout.write("\raligned %d of %d OGs using %s" %(endindex, len(unaligned_filelist), alignmeth))
 		sys.stdout.flush()
 		startindex = endindex
 	
 	#finish off any remaining alignment jobs (in case the total number of alignment-jobs was not evenly divisible by the number of cpus)
 	if remaining_mp_group_threads > 0:
 		endindex = len(unaligned_filelist)
-		aligned_filelist.extend(run_multiprocess_alignment(args.alignmeth, unaligned_filelist[startindex:endindex]))
-		sys.stdout.write("\raligned %d of %d OGs using %s" %(endindex, len(unaligned_filelist), args.alignmeth))
+		aligned_filelist.extend(run_multiprocess_alignment(alignmeth, unaligned_filelist[startindex:endindex]))
+		sys.stdout.write("\raligned %d of %d OGs using %s" %(endindex, len(unaligned_filelist), alignmeth))
 		sys.stdout.flush()
 	
 #	print "\n".join(aligned_filelist)
@@ -360,31 +370,31 @@ def make_alignments(unaligned_filelist):
 	mylogger.debug("length of aligned_filelist: %s" %len(aligned_filelist)) 
 	return aligned_filelist
 
-def clustalw(inputfile, mp_output):
+def clustalw(inputfile, mp_output): #deactivated
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_CLUSTALW_temp_fasta_", 1)
-		clustalw_cline = ClustalwCommandline(os.path.join(args.aligner_path, args.alignmeth), INFILE = inputfile, outfile = outputfile, type = "PROTEIN", align = True, quiet = True, OUTORDER = "INPUT")
+		clustalw_cline = ClustalwCommandline(os.path.join(args.aligner_path, alignmeth), INFILE = inputfile, outfile = outputfile, type = "PROTEIN", align = True, quiet = True, OUTORDER = "INPUT")
 		try:
 			clustalw_cline()
 			mp_output.put(outputfile)
 		except Exception:
 			raise RuntimeError("Your clustalw version is older than v2 (probably v1.83). You should use version 2 or newer (called clustalw2 on many systems)")
 
-def clustalw2(inputfile, mp_output):
+def clustalw2(inputfile, mp_output): #deactivated
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_CLUSTALW2_temp_fasta_", 1)
-		clustalw_cline = ClustalwCommandline(os.path.join(args.aligner_path, args.alignmeth), INFILE = inputfile, outfile = outputfile, type = "PROTEIN", align = True, quiet = True, OUTORDER = "INPUT")
+		clustalw_cline = ClustalwCommandline(os.path.join(args.aligner_path, alignmeth), INFILE = inputfile, outfile = outputfile, type = "PROTEIN", align = True, quiet = True, OUTORDER = "INPUT")
 		clustalw_cline()
 		mp_output.put(outputfile)
 
-def clustalo(inputfile, mp_output):#Todo: find out a way to check clustalo version
+def clustalo(inputfile, mp_output):#Todo: find out a way to check clustalo version #deactivated
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_CLUSTALO_temp_fasta_", 1)
-		clustalomega_cline = ClustalOmegaCommandline(os.path.join(args.aligner_path, args.alignmeth), infile = inputfile, outfile = outputfile, seqtype = "Protein", threads = args.nthreads, verbose = False, force = True, outputorder = "input-order")
+		clustalomega_cline = ClustalOmegaCommandline(os.path.join(args.aligner_path, alignmeth), infile = inputfile, outfile = outputfile, seqtype = "Protein", threads = args.nthreads, verbose = False, force = True, outputorder = "input-order")
 		clustalomega_cline()
 		mp_output.put(outputfile)
 
 def muscle(inputfile, mp_output):
 		#mylogger.debug("muscle(%s)" % inputfile)
 		outputfile = inputfile.replace("unaligned_temp_fasta_", "SINGLEalignment_MUSCLE_temp_fasta_", 1)
-		muscle_cline = MuscleCommandline(os.path.join(args.aligner_path, args.alignmeth), input = inputfile, out = outputfile, quiet = True) #add 'stable = True' to the end of this list, if the stable-bug in muscle is fixed (remove the correct_for_muscle_bug() method in that case)
+		muscle_cline = MuscleCommandline(args.muscle_binary, input = inputfile, out = outputfile, quiet = True) #add 'stable = True' to the end of this list, if the stable-bug in muscle is fixed (remove the correct_for_muscle_bug() method in that case)
 		muscle_cline()
 		mp_output.put(outputfile)
 
@@ -473,7 +483,7 @@ def write_temp_alignments(alignmentlist, prefix):
 def read_alignments(input_filelist):
 	mylogger.info("read_alignments(input_filelist)")
 	alignmentlist = []
-	if args.alignmeth == "muscle" or args.alignmeth == "clustalo" or len(input_filelist) == 1: #Last condition assumes that ONLY final result files would be passed as a filelist of only one file
+	if alignmeth == "muscle" or alignmeth == "clustalo" or len(input_filelist) == 1: #Last condition assumes that ONLY final result files would be passed as a filelist of only one file
 		aformat = "fasta"# just a workaround for this method
 	else:
 		aformat = "clustal"
@@ -597,7 +607,7 @@ def call_Gblocks(file_name, ORG_number): #this calls Gblocks with standard setti
 	tempfile_name, temp_name_dict = rename_for_gblocks(file_name)
 	gblocks_args = ['-t=p', '-e=-gb', '-d=n', '-b1=%s' %gb_cutoff_value, '-b2=%s' %gb_cutoff_value, '-b3=8', '-b4=10', '-b5=a']
 	
-	gblocks_command = [os.path.join(gblocks_path, "gblocks"), tempfile_name] + gblocks_args
+	gblocks_command = [args.gblocks_binary, tempfile_name] + gblocks_args
 	call(gblocks_command)
 	rename_after_gblocks(tempfile_name + "-gb", temp_name_dict, file_name + "-gb")
 	
@@ -683,37 +693,8 @@ def raxml_rapidbs(alignmentfile): #parameters should be a dictionary (This dicti
 	#the resultfiles will be: "RAxML_bipartitions.rapidBS_final_tree" and "RAxML_bipartitionsBranchLabels.rapidBS_final_tree"
 	#Labels on nodes or branches, respectively
 	outputfiles = ["RAxML_bipartitions." + outname, "RAxML_bipartitionsBranchLabels." + outname]
-
-def raxml_bs(alignmentfile):
-	mylogger.debug("raxml_bs(%s)" % alignmentfile)
-	mylogger.info("Calculating phylogenies: Thorough bootstrap analyses with raxml")
-	mylogger.info("\tDetermining best ML tree of 20 raxmlHPC runs using %d threads" % args.nthreads)
-	
-	raxml_cline = RaxmlCommandline(raxml_prog, model = "PROTGAMMAAUTO", name = "best_delme_tempfile", parsimony_seed = args.seed_nr, num_replicates = 20, sequences = alignmentfile, threads = args.nthreads)
-	mylogger.info("\t-->" + str(raxml_cline))
-	raxml_cline()
-	#the resultfile will be :"RAxML_bestTree.best_delme_tempfile"
-	mylogger.info("\t-->SUCCESS")
-	
-	mylogger.info("\tDoing bootstrap analyses with %d runs using raxmlHPC using %d threads" %(args.nr_bootstraps, args.nthreads))
-	
-	raxml_cline = RaxmlCommandline(raxml_prog, model = "PROTGAMMAAUTO", sequences = alignmentfile, name = "boot_delme_tempfile", parsimony_seed = args.seed_nr, bootstrap_seed = args.seed_nr, num_replicates = args.nr_bootstraps, threads = args.nthreads)
-	mylogger.info("\t-->" + str(raxml_cline))
-	raxml_cline()
-	#the resultfile will be: "RAxML_bootstrap.boot_delme_tempfile"
-	mylogger.info("\t-->SUCCESS")
-	
-	mylogger.info("\tDrawing bipartitions of bootstrap trees onto best ML tree using raxmlHPC using " + str(args.nthreads) + " threads")
-	
-	outname = "MLSA_raxmlBS" + str(args.nr_bootstraps) + "_" + time.strftime("%Y%m%d%H%M%S") + "_" + "final_tree"
-	raxml_cline = RaxmlCommandline(raxml_prog, model = "PROTGAMMAAUTO", parsimony_seed = args.seed_nr, algorithm = "b", starting_tree = "RAxML_bestTree.best_delme_tempfile", bipartition_filename = "RAxML_bootstrap.boot_delme_tempfile", name = outname)
-	mylogger.info("\t-->" + str(raxml_cline))
-	raxml_cline()
-	
-	#The resultfiles will be: RAxML_bipartitions.final_tree" and "RAxML_bipartitionsBranchLabels.final_tree"
-	outputfiles = ["RAxML_bipartitions." + outname, "RAxML_bipartitionsBranchLabels." + outname]
-	mylogger.info("\t-->SUCCESS")
 	return outputfiles
+
 
 def raxml(alignmentfile):
 	mylogger.debug("raxml(%s)" % alignmentfile)
@@ -769,7 +750,7 @@ def main():
 		if not args.keep_temp:
 			infotext += " --> will delete all temporary files "
 		mylogger.info(infotext)
-		mylogger.info("-using aligner '%s'" % args.alignmeth)
+		mylogger.info("-using aligner '%s'" % alignmeth)
 		#mylogger.info("-alignment filter: " + args.afilter)
 		headers, MLSA_list, OG_number = read_PO_file(args.PO_file)
 		##move this to checkargs()
@@ -782,7 +763,7 @@ def main():
 		#alignments
 		aligned_filelist = make_alignments(unaligned_filelist)
 		mylogger.debug("MAIN: length of aligned_filelist = %s" % len(aligned_filelist))
-		if args.alignmeth == "muscle":
+		if alignmeth == "muscle":
 			correct_for_muscle_bug(aligned_filelist, unaligned_filelist) #Necessary because bug in muscle '-stable' option (option disabled for this reason as of muscle version 3.8)
 		alignment_list = read_alignments(aligned_filelist)
 		mylogger.debug("length alignment_list after reading corrected files back in : %s" %len(alignment_list))
@@ -867,7 +848,7 @@ def main():
 			for delfile in unaligned_filelist:
 				mylogger.debug("deleting {}".format(delfile))
 				os.remove(delfile)
-				if "clustalw" in args.alignmeth:
+				if "clustalw" in alignmeth:
 					os.remove(delfile.rstrip(".fasta") + ".dnd") #remove pesky "guide-tree" files produced by clustal aligners as well
 			for delfile in aligned_filelist:
 				mylogger.debug("deleting {}".format(delfile))
