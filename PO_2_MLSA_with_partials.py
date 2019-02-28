@@ -822,13 +822,13 @@ def main():
 		alignment_list = remove_gaps_from_alignment_borders(alignment_list)
 		gblocked_alignment_list = rungblocks_on_single_alignments(alignment_list, OG_number, headers)
 		for a in gblocked_alignment_list:
-			fasttree(a)
+			fasttree(a)	
 		raise Exception("I want to stop NOW")
 		
 		#if not gblocks and verbose:
 		#	mylogger.info("Leaving the single alignments as they are (Not removing any gapped or unconserved positions)")
 		mylogger.info("\n%s\nconcatenating alignments" % hline)
-		
+		alignment_list = read_alignments(gblocked_alignment_list)
 		concatenated_alignment = concatenate_alignments(alignment_list, headers)
 		mylogger.info("\n%s\nwriting concatenated alignment to fasta-file: %s" %(hline, outputfilename))
 		write_final_alignment(outputfilename, concatenated_alignment)
