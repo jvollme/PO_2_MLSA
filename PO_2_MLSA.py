@@ -791,11 +791,13 @@ def main():
 			mylogger.info(" standard deviation:\t{}\n".format(stdev))
 			mylogger.info("upper cutoff:\t{}\n".format(mean + (2 * stdev)))
 			mylogger.info("The following marker-alignments have been identified as outliers and will NOT be used for MLSA:\n{}".format([ " - " + gblocked_alignment_list[x] for x in outlier_indices]))
+			mylogger.info("len(gblocked_alignment_list) BEFORE:{}".format(len(gblocked_alignment_list)))
 			gblocked_alignment_list = [ gblocked_alignment_list[x] for x in range(len(gblocked_alignment_list)) if x not in outlier_indices ]
+			mylogger.info("len(gblocked_alignment_list) AFTER:{}".format(len(gblocked_alignment_list)))
 			mylogger.info("--> Removed {} potential outliers from the alignment list prior to concatenating!".format(len(outlier_indices)))
 		
 		mylogger.info("\n%s\nconcatenating alignments" % hline)
-		concatenated_alignment = concatenate_alignments(read_alignments(alignment_list), headers)
+		concatenated_alignment = concatenate_alignments(read_alignments(gblocked_alignment_list), headers)
 		mylogger.info("\n%s\nwriting concatenated alignment to fasta-file: %s" %(hline, outputfilename))
 		write_final_alignment(outputfilename, concatenated_alignment)
 
